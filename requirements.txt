@@ -1,2 +1,3 @@
-torch
-torchvision
+# PyTorch and TorchVision for deep learning and knowledge distillation
+torch>=2.0.0
+torchvision>=0.15.0
