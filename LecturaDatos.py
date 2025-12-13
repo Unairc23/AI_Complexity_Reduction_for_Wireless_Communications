@@ -29,7 +29,7 @@ def preprocesarDatos(data, window, stride, snr_db=20):
         imagenes.append(img[..., np.newaxis])
         imagenes_ruido.append(img_ruido[..., np.newaxis])
 
-    print(f"Numero de imagenes: {imagenes.__sizeof__()}")
+    print(f"Numero de imagenes: {len(imagenes)}")
     return imagenes, imagenes_ruido
 
 def añadir_awgn(señal, snr_db):
@@ -37,11 +37,14 @@ def añadir_awgn(señal, snr_db):
     snr_linear = 10 ** (snr_db / 10)
     p_ruido = p_señal / snr_linear
     ruido = np.random.normal(0, np.sqrt(p_ruido), señal.shape)
-    return señal + ruido
+    señal_ruido = señal + ruido
+    return np.clip(señal_ruido, 0.0, 1.0) # Esto hace que los valores creados por el ruido estén siempre
+    # en un rango [0,1]. Esto no es necesario para el ruido, pero ahora mismo los valores de la imagen están normalizados
+    # en un rango [0,1], si entrenas con esto pero luego el ruido lo sobrepasa el modelol lo mismo se rompe
 
 if __name__ == '__main__':
     dset = 'h_AAplant_int_5G'
-    snr_db = 20
+    snr_db = 5
 
     data = cargarDatos(dset)
     imagenes, imagenes_ruido = preprocesarDatos(data, 128, 16, snr_db)
@@ -61,5 +64,5 @@ if __name__ == '__main__':
     np.save(f'data/NIST_{dset}_imagenes.npy', imagenes)
     print(f"Imagenes guardadas en data/NIST_{dset}_imagenes.npy")
 
-    np.save(f'data/NIST_{dset}_imagenes_snr_{snr_db}.npy', imagenes)
+    np.save(f'data/NIST_{dset}_imagenes_snr_{snr_db}.npy', imagenes_ruido)
     print(f"Imagenes con SNR {snr_db} guardadas en data/NIST_{dset}_imagenes_snr_{snr_db}.npy")
