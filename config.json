@@ -5,6 +5,8 @@
     "Y": "data/NIST_h_AAplant_int_5G_imagenes.npy",
     "sDepth": 2,
     "sEpoch": 4,
-    "tEpoch": 4
+    "tEpoch": 4,
+    "lr": 0.01,
+    "alpha": 0.7
   }
 }

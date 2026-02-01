@@ -48,7 +48,7 @@ class NPYDataset(Dataset):
             x = self.transform(x)
         return x, y
 
-# =============================== Configurar torch / seed ===============================
+# ========================================== Configurar torch / seed ===================================================
 device = torch.accelerator.current_accelerator().type if torch.accelerator.is_available() else "cpu"
 
 torch.manual_seed(42)
@@ -59,7 +59,7 @@ np.random.seed(42)
 torch.backends.cudnn.deterministic = True
 torch.backends.cudnn.benchmark = False
 
-# =============================== Crear dataset ===============================
+# =============================================== Crear dataset ========================================================
 X = np.load(conf["KDR"]["X"])
 Y = np.load(conf["KDR"]["Y"])
 
@@ -79,7 +79,7 @@ train_loader = torch.utils.data.DataLoader(train_ds, batch_size=128, shuffle=Tru
 val_loader = torch.utils.data.DataLoader(val_ds, batch_size=128, shuffle=False, num_workers=2)
 test_loader = torch.utils.data.DataLoader(test_ds, batch_size=128, shuffle=False, num_workers=2)
 
-# =============================== Entrenamiento de los modelos ===============================
+# ====================================== Entrenamiento de los modelos =================================================
 def train(model, train_loader, epochs, learning_rate, device):
     criterion = nn.MSELoss()
     optimizer = optim.Adam(model.parameters(), lr=learning_rate)
@@ -107,7 +107,49 @@ def train(model, train_loader, epochs, learning_rate, device):
         train_loss = running_loss / len(train_loader)
         print(f"Epoch {epoch+1}/{epochs} | Loss: {train_loss:.4f}")
 
-# =============================== Carga y Parser ===============================
+def train_knowledge_distillation(teacher, student, train_loader, epochs, learning_rate, teacher_threshold, alpha, device):
+    #Todo: Ahora mismo el teacher calcula el mse de todo el batch, no solo de la prediccion actual
+    mse_loss = nn.MSELoss()
+    optimizer = optim.Adam(student.parameters(), lr=learning_rate)
+
+    teacher.to(device)
+    student.to(device)
+    teacher.eval()  # Teacher set to evaluation mode
+    student.train() # Student to train mode
+
+    for epoch in range(epochs):
+        running_loss = 0.0
+        for X, Y in train_loader:
+            X, Y = X.to(device), Y.to(device)
+
+            optimizer.zero_grad()
+
+            # Forward pass with the teacher model - do not save gradients here as we do not change the teacher's weights
+            with torch.no_grad():
+                teacher_pred = teacher(X)
+            # Forward pass with the student model
+            student_pred = student(X)
+
+            teacher_y_loss = mse_loss(teacher_pred, Y)
+            student_y_loss = mse_loss(student_pred, Y)
+
+            teacher_student_loss = mse_loss(student_pred, teacher_pred)
+            loss = alpha * teacher_student_loss + (1.0 - alpha) * student_y_loss
+
+            # if teacher_y_loss < teacher_threshold:
+            #     teacher_student_loss = mse_loss(student_pred, teacher_pred)
+            #     loss = alpha * teacher_student_loss + (1.0 - alpha) * student_y_loss
+            # else:
+            #     loss = student_y_loss
+
+            loss.backward()
+            optimizer.step()
+            running_loss += loss.item()
+
+        epoch_loss = running_loss / len(train_loader)
+        print(f"Epoch {epoch + 1}/{epochs} | Loss: {epoch_loss:.4f}")
+
+# ============================================== Carga y Parser ========================================================
 def load_model(model, path, device):
     """Carga un modelo si el archivo existe, o devuelve uno nuevo."""
     if os.path.exists(path):
@@ -146,7 +188,7 @@ def parse_args():
 
     return parser.parse_args()
 
-# =============================== Representar graficamente ===============================
+# ==========================================Representar graficamente====================================================
 def graficar(model, dataset, device, idx=0):
     model.eval()
 
@@ -192,8 +234,10 @@ if __name__ == "__main__":
 
     if args.mode == "full":
         if args.teacher != "resnet18": # Los modelos resnet usados ya están preentrenados con CIFAR10
-            train(model=teacher, train_loader=train_loader, epochs=conf["KDR"]["tEpoch"], learning_rate=0.01, device=device)
-        train(model=student, train_loader=train_loader, epochs=conf["KDR"]["tEpoch"], learning_rate=0.01, device=device)
+            train(model=teacher, train_loader=train_loader, epochs=conf["KDR"]["tEpoch"], learning_rate=["KDR"]["lr"],
+                  device=device)
+        train(model=student, train_loader=train_loader, epochs=conf["KDR"]["tEpoch"], learning_rate=["KDR"]["lr"],
+              device=device)
 
         torch.save(teacher.state_dict(), f"model/{args.teacher}.pth")
         torch.save(student.state_dict(), f"model/{args.student}.pth")
@@ -208,3 +252,10 @@ if __name__ == "__main__":
     print(f"Student Params: {student_params}")
 
     graficar(student, test_ds, device, idx=5)
+
+    kd_student = MODEL_REGISTRY[args.student]().to(device)
+    train_knowledge_distillation(teacher=teacher, student=kd_student, train_loader=train_loader,
+                                 epochs=conf["KDR"]["tEpoch"], learning_rate=["KDR"]["lr"], device=device,
+                                 teacher_threshold=0.001, alpha=conf["KDR"]["alpha"])
+
+    graficar(kd_student, test_ds, device, idx=5)
