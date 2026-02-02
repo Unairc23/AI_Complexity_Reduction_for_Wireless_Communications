@@ -7,6 +7,11 @@
     "sEpoch": 4,
     "tEpoch": 4,
     "lr": 0.01,
-    "alpha": 0.7
+    "alpha": 0.7,
+    "Features":
+    {
+      "t_layers": -2,
+      "s_layers": -2
+    }
   }
 }
