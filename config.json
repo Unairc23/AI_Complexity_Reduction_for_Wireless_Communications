@@ -1,8 +1,11 @@
 {
   "KDR":
   {
-    "X": "data/NIST_h_AAplant_int_5G_imagenes_snr_10.npy",
-    "Y": "data/NIST_h_AAplant_int_5G_imagenes.npy",
+    "X": "data/NIST_h_AAplant_int_5G_imagenes_snr_variable.npy",
+    "Y": "data/NIST_h_AAplant_int_5G_imagenes_limpias_variable.npy",
+    "sModel": "DnCNN",
+    "tModel": "DnCNN",
+    "train": true,
     "sDepth": 2,
     "sEpoch": 4,
     "tEpoch": 4,

@@ -1,15 +1,12 @@
 import argparse
 import json
 import os
-import sys
 
 import torch
 import torch.nn as nn
 import torch.optim as optim
 from matplotlib import pyplot as plt
 from torch.utils.data import random_split, Dataset
-import torchvision.transforms as transforms
-import torchvision.datasets as datasets
 import torch.nn.functional as F
 import random, numpy as np
 
@@ -105,7 +102,7 @@ def train(model, train_loader, epochs, learning_rate, device):
             running_loss += loss.item()
 
         train_loss = running_loss / len(train_loader)
-        print(f"Epoch {epoch+1}/{epochs} | Loss: {train_loss:.4f}")
+        print(f"Epoch {epoch+1}/{epochs} | Loss: {train_loss:.8f}")
 
 def train_knowledge_distillation(teacher, student, train_loader, epochs, learning_rate, teacher_threshold, alpha, device):
     #Todo: Ahora mismo el teacher calcula el mse de todo el batch, no solo de la prediccion actual
@@ -147,11 +144,10 @@ def train_knowledge_distillation(teacher, student, train_loader, epochs, learnin
             running_loss += loss.item()
 
         epoch_loss = running_loss / len(train_loader)
-        print(f"Epoch {epoch + 1}/{epochs} | Loss: {epoch_loss:.4f}")
+        print(f"Epoch {epoch + 1}/{epochs} | Loss: {epoch_loss:.8f}")
 
 def train_feature_based_kd(teacher, student, train_loader, epochs, learning_rate, alpha, device):
     #Todo: - Implementar bottleneck para los casos en los que la arquitectura de teacher y student sea diferente.
-    #      - Implementar cosine_kd_loss para comparar las faetures de ambos modelos
     # (KNOWLEDGE DISTILLATION FOR SPEECH DENOISING BY LATENT REPRESENTATION ALIGNMENT WITH COSINE DISTANCE)
     mse_loss = nn.MSELoss()
     optimizer = optim.Adam(student.parameters(), lr=learning_rate)
@@ -178,7 +174,7 @@ def train_feature_based_kd(teacher, student, train_loader, epochs, learning_rate
             s_latent = student_features["latent"]
 
             out_loss = mse_loss(student_pred, Y)
-            kd_loss = mse_loss(s_latent, t_latent)
+            kd_loss = cosine_kd_loss(s_latent, t_latent)
 
             loss = out_loss + alpha * kd_loss
             loss.backward()
@@ -187,7 +183,12 @@ def train_feature_based_kd(teacher, student, train_loader, epochs, learning_rate
             running_loss += loss.item()
 
         epoch_loss = running_loss / len(train_loader)
-        print(f"Epoch {epoch + 1}/{epochs} | Loss: {epoch_loss:.4f}")
+        print(f"Epoch {epoch + 1}/{epochs} | Loss: {epoch_loss:.8f}")
+
+def cosine_kd_loss(h_s, h_t):  # h_s, h_t: [B, C, H, W]
+    h_s = F.normalize(h_s.flatten(1), dim=1)
+    h_t = F.normalize(h_t.flatten(1), dim=1)
+    return 1 - (h_s * h_t).sum(dim=1).mean()
 
 # ============================================== Carga y Parser ========================================================
 def load_model(model, path, device):
@@ -229,7 +230,7 @@ def parse_args():
     return parser.parse_args()
 
 # ==========================================Representar graficamente====================================================
-def graficar(model, dataset, device, idx=0):
+def graficar(model, dataset, device, idx=0, modelName="modelo"):
     model.eval()
 
     x, y = dataset[idx]
@@ -252,7 +253,7 @@ def graficar(model, dataset, device, idx=0):
     axs[1].set_title("Objetivo (limpia)")
 
     axs[2].imshow(y_hat, cmap="viridis")
-    axs[2].set_title("Reconstrucción")
+    axs[2].set_title(f"Reconstrucción {modelName}")
 
     for ax in axs:
         ax.axis("off")
@@ -266,11 +267,11 @@ if __name__ == "__main__":
     # Creo que esta linea solo es encesaria en windows, linux hace un fork
     torch.multiprocessing.freeze_support()
 
-    args = parse_args()
-    print(args)
+    tModel = conf["KDR"]["tModel"]
+    sModel = conf["KDR"]["sModel"]
 
-    teacher = MODEL_REGISTRY[args.teacher]().to(device)
-    student = MODEL_REGISTRY[args.student]().to(device)
+    teacher = MODEL_REGISTRY[tModel]().to(device)
+    student = MODEL_REGISTRY[sModel]().to(device)
 
     teacher_features = {}
     student_features = {}
@@ -281,21 +282,22 @@ if __name__ == "__main__":
             container[name] = output
         return hook
 
+    # TODO: Ahora mismo feature based solo funciona con dncnn, cualquier otro modelo rompe
     teacher.dncnn[conf["KDR"]["Features"]["t_layers"]].register_forward_hook(
         save_activation(teacher_features, "latent")
     )
 
-    if args.mode == "full":
-        if args.teacher != "resnet18": # Los modelos resnet usados ya están preentrenados con CIFAR10
-            train(model=teacher, train_loader=train_loader, epochs=conf["KDR"]["tEpoch"], learning_rate=["KDR"]["lr"],
+    if conf["KDR"]["train"]:
+        if tModel != "resnet18": # Los modelos resnet usados ya están preentrenados con CIFAR10
+            train(model=teacher, train_loader=train_loader, epochs=conf["KDR"]["tEpoch"], learning_rate=conf["KDR"]["lr"],
                   device=device)
-        train(model=student, train_loader=train_loader, epochs=conf["KDR"]["tEpoch"], learning_rate=["KDR"]["lr"],
+        train(model=student, train_loader=train_loader, epochs=conf["KDR"]["tEpoch"], learning_rate=conf["KDR"]["lr"],
               device=device)
-        torch.save(teacher.state_dict(), f"model/{args.teacher}.pth")
-        torch.save(student.state_dict(), f"model/{args.student}.pth")
+        torch.save(teacher.state_dict(), f"model/{tModel}.pth")
+        torch.save(student.state_dict(), f"model/{sModel}.pth")
     else:
-        teacher = load_model(teacher, path=f"model/{args.teacher}.pth", device=device)
-        student = load_model(student, path=f"model/{args.student}.pth", device=device)
+        teacher = load_model(teacher, path=f"model/{tModel}.pth", device=device)
+        student = load_model(student, path=f"model/{sModel}.pth", device=device)
 
     teacher_params = "{:,}".format(sum(p.numel() for p in teacher.parameters()))
     print(f"Teacher Params: {teacher_params}")
@@ -303,21 +305,45 @@ if __name__ == "__main__":
     print(f"Student Params: {student_params}")
 
     # Comparacion entre teacher y modelo sin destilar
-    graficar(student, test_ds, device, idx=5)
+    idx = random.randint(0, len(test_ds) - 1)
+    print(idx)
+    graficar(student, test_ds, device, idx=idx, modelName="no_kd_student")
 
-    # Entrenar modelo destilado
-    kd_student = MODEL_REGISTRY[args.student]().to(device)
+    # ============================================== KD clasica ========================================================
+    kd_student = MODEL_REGISTRY[sModel]().to(device)
 
     kd_student.dncnn[conf["KDR"]["Features"]["s_layers"]].register_forward_hook(
         save_activation(student_features, "latent")
     )
 
     train_knowledge_distillation(teacher=teacher, student=kd_student, train_loader=train_loader,
-                                 epochs=conf["KDR"]["tEpoch"], learning_rate=["KDR"]["lr"], device=device,
+                                 epochs=conf["KDR"]["tEpoch"], learning_rate=conf["KDR"]["lr"], device=device,
                                  teacher_threshold=0.001, alpha=conf["KDR"]["alpha"])
 
-    train_feature_based_kd(teacher=teacher, student=kd_student, train_loader=train_loader, epochs=conf["KDR"]["tEpoch"],
-                           learning_rate=["KDR"]["lr"], device=device, alpha=conf["KDR"]["alpha"])
-
     # Comparacion entre teacher y modelo destilado
-    graficar(kd_student, test_ds, device, idx=5)
+    graficar(kd_student, test_ds, device, idx=idx, modelName="kd_student")
+
+    # =========================================== Feature based KD =====================================================
+    kd_student_feature = MODEL_REGISTRY[sModel]().to(device)
+
+    kd_student_feature.dncnn[conf["KDR"]["Features"]["s_layers"]].register_forward_hook(
+        save_activation(student_features, "latent")
+    )
+
+    train_feature_based_kd(teacher=teacher, student=kd_student_feature, train_loader=train_loader, epochs=conf["KDR"]["tEpoch"],
+                           learning_rate=conf["KDR"]["lr"], device=device, alpha=conf["KDR"]["alpha"])
+
+    graficar(kd_student_feature, test_ds, device, idx=idx, modelName="kd_student_feature")
+
+    # Comprobar que efectivamente dan resultados diferentes
+    with torch.no_grad():
+        x, y = test_ds[idx]
+        x = x.unsqueeze(0).to(device)
+
+        y_s = student(x)
+        y_kd = kd_student(x)
+        y_fk = kd_student_feature(x)
+
+    print("Δ student vs KD:", torch.mean((y_s - y_kd) ** 2).item())
+    print("Δ KD vs feature-KD:", torch.mean((y_kd - y_fk) ** 2).item())
+

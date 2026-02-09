@@ -77,5 +77,5 @@ if __name__ == '__main__':
     np.save(f'data/NIST_{dset}_imagenes_snr_variable.npy', imagenes_ruido_variable)
     print(f"Imagenes con SNR {snrs} guardadas en data/NIST_{dset}_imagenes_snr_variable.npy")
 
-    np.save(f'data/NIST_{dset}_imagenes_limpias_variable.npy', imagenes_ruido_variable)
+    np.save(f'data/NIST_{dset}_imagenes_limpias_variable.npy', imagenes_bien_variable)
     print(f"Imagenes limpias con repetición guardadas en data/NIST_{dset}_imagenes_limpias_variable.npy")
