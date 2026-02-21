@@ -2,6 +2,7 @@ import torch
 import timm
 import torch.nn as nn
 import torch.optim as optim
+from torchvision.models.resnet import BasicBlock
 
 def load_resnet():
     model = timm.create_model("resnet18", pretrained=False)
@@ -192,7 +193,7 @@ class DeepNN_Adaptada(nn.Module):
 
 # https://github.com/opendenoising/opendenoising-benchmark/tree/master
 class DnCNN(nn.Module):
-    def __init__(self, depth=5, n_filters=64, kernel_size=3, n_channels=1):
+    def __init__(self, depth=5, n_filters=64, kernel_size=3, n_channels=2):
         super(DnCNN, self).__init__()
         layers = [
             nn.Conv2d(in_channels=n_channels, out_channels=n_filters, kernel_size=kernel_size, padding=1, bias=False),
@@ -207,4 +208,47 @@ class DnCNN(nn.Module):
 
     def forward(self, x):
         out = self.dncnn(x)
-        return out
+        return x - out
+
+
+class ResNetDenoiser(nn.Module):
+    def __init__(self, in_channels=1, base_channels=64, layers=[2,2,2,2]):
+        super().__init__()
+
+        # ===== Encoder =====
+        self.conv1 = nn.Conv2d(in_channels, base_channels, kernel_size=3, padding=1, bias=False)
+        self.bn1 = nn.BatchNorm2d(base_channels)
+        self.relu = nn.ReLU(inplace=True)
+
+        self.layer1 = self._make_layer(base_channels, base_channels, layers[0])
+        self.layer2 = self._make_layer(base_channels, base_channels, layers[1])
+        self.layer3 = self._make_layer(base_channels, base_channels, layers[2])
+        self.layer4 = self._make_layer(base_channels, base_channels, layers[3])
+
+        # ===== Decoder =====
+        self.decoder = nn.Sequential(
+            nn.Conv2d(base_channels, base_channels, 3, padding=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(base_channels, in_channels, 3, padding=1)
+        )
+
+    def _make_layer(self, inplanes, planes, blocks):
+        layers = []
+        for _ in range(blocks):
+            layers.append(BasicBlock(inplanes, planes))
+        return nn.Sequential(*layers)
+
+    def forward(self, x):
+        identity = x
+
+        x = self.relu(self.bn1(self.conv1(x)))
+
+        x = self.layer1(x)
+        x = self.layer2(x)
+        x = self.layer3(x)
+        x = self.layer4(x)
+
+        x = self.decoder(x)
+
+        # Residual learning (como DnCNN)
+        return identity - x

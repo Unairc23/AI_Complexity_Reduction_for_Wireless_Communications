@@ -1,35 +1,60 @@
+import json
+
 import numpy as np
 import h5py
 from matplotlib import pyplot as plt
 
+with open("config.json", "r", encoding="utf-8") as f:
+    conf = json.load(f)
+
 def cargarDatos(dset='h_AAplant_int_5G'):
     f = h5py.File("NIST_Samples/NIST_Samples.mat",'r')
     data = f[dset]
-    data = np.array(data) # For converting to a NumPy array
+    data = np.array(data)
     print (f"Shape original: {data.shape}")
     return data
 
-def preprocesarDatos(data, window, stride, snr_db=20):
+def preprocesarDatos(data, window, stride, snr_db=5):
     data_clean = data[:, :128]
     print(f"Eliminando valores τ para evitar NaN: {data_clean.shape}")
 
-    data_complex = data_clean['real'] + 1j * data_clean['imag']
-    data_complex = np.nan_to_num(data_complex, nan=0.0)
+    real = data_clean['real']
+    imag = data_clean['imag']
+
+    real = np.nan_to_num(real, nan=0.0)
+    imag = np.nan_to_num(imag, nan=0.0)
+
+    señal = real + 1j * imag
 
     imagenes = []
     imagenes_ruido = []
-    for t in range(0, data_complex.shape[0]-window, stride):
-        img = data_complex[t:t + window, :]
-        img = np.abs(img)
-        eps = 1e-12
-        img = 10 * np.log10(img + eps) # Epsilon para evitar hacer log(0)
-        img = np.clip(img, -60, 0) # Es raro que haya informacion por debajo de -60db, sueñe ser ruido
-        img = (img + 60) / 60 # Normalizar los valores para que el modelo pueda aprender mejor
-        img_ruido = añadir_awgn(img, snr_db)
-        imagenes.append(img[..., np.newaxis])
-        imagenes_ruido.append(img_ruido[..., np.newaxis])
 
-    print(f"Numero de imagenes: {len(imagenes)}")
+    for t in range(0, señal.shape[0] - window, stride):
+
+        bloque = señal[t:t + window, :]
+
+        # ---- LIMPIO ----
+        real_clean = np.real(bloque)
+        imag_clean = np.imag(bloque)
+
+        # ---- CON RUIDO ----
+        bloque_ruido = añadir_awgn_complejo(bloque, snr_db)
+        real_ruido = np.real(bloque_ruido)
+        imag_ruido = np.imag(bloque_ruido)
+
+        # Normalización por canal
+        real_clean = normalizar(real_clean)
+        imag_clean = normalizar(imag_clean)
+
+        real_ruido = normalizar(real_ruido)
+        imag_ruido = normalizar(imag_ruido)
+
+        img = np.stack([real_clean, imag_clean], axis=-1)
+        img_ruido = np.stack([real_ruido, imag_ruido], axis=-1)
+
+        imagenes.append(img)
+        imagenes_ruido.append(img_ruido)
+
     return imagenes, imagenes_ruido
 
 def añadir_awgn(señal, snr_db):
@@ -42,30 +67,66 @@ def añadir_awgn(señal, snr_db):
     # en un rango [0,1]. Esto no es necesario para el ruido, pero ahora mismo los valores de la imagen están normalizados
     # en un rango [0,1], si entrenas con esto pero luego el ruido lo sobrepasa el modelol lo mismo se rompe
 
+def añadir_awgn_complejo(señal, snr_db):
+    p_señal = np.mean(np.abs(señal) ** 2)
+    snr_linear = 10 ** (snr_db / 10)
+    p_ruido = p_señal / snr_linear
+    sigma = np.sqrt(p_ruido / 2)
+    ruido = sigma * (np.random.randn(*señal.shape) +
+                     1j * np.random.randn(*señal.shape))
+    return señal + ruido
+
+def normalizar(x):
+    min_v = x.min()
+    max_v = x.max()
+    return (x - min_v) / (max_v - min_v + 1e-12)
+
 if __name__ == '__main__':
     dset = 'h_AAplant_int_5G'
-    snr_db = 10
+    dsets = ['h_AAplant_int_5G', 'h_AAplant_int_2G', 'h_AAplant_5G', 'h_AAplant_2G', 'h_Boil_2G', 'h_Boil_5G', 'h_GBurg_2G', 'h_GBurg_5G']
+    snr_db = 5
     snrs = [5, 10, 20]
 
-    data = cargarDatos(dset)
+    if (conf["Data"]["Mixed"]):
+        print("============== Juntando datasets ==============")
+        data_total =[]
+        for d in dsets:
+            data_total.append(cargarDatos(d))
+        data = np.concatenate(data_total, axis=0)
+        dset = "full" # Esto solo para poner el nombre, se podria hacer mejor
+    else:
+        print("============== Cargando dataset individual ==============")
+        data = cargarDatos(dset)
+
     imagenes, imagenes_ruido = preprocesarDatos(data, 128, 16, snr_db)
 
-    fig, axes = plt.subplots(2, 1, figsize=(8, 8))
-    axes = axes.flatten()
+    fig, axes = plt.subplots(2, 2, figsize=(10, 8))
 
-    im = axes[0].imshow(imagenes[0], cmap='viridis')
-    plt.colorbar(im, ax=axes[0], fraction=0.046, pad=0.04)
-    im = axes[1].imshow(imagenes_ruido[0], cmap='viridis')
-    plt.colorbar(im, ax=axes[1], fraction=0.046, pad=0.04)
+    im = axes[0, 0].imshow(imagenes[0][:, :, 0], cmap='viridis')
+    axes[0, 0].set_title("Real limpia")
+    plt.colorbar(im, ax=axes[0, 0])
 
+    im = axes[0, 1].imshow(imagenes[0][:, :, 1], cmap='viridis')
+    axes[0, 1].set_title("Imag limpia")
+    plt.colorbar(im, ax=axes[0, 1])
+
+    im = axes[1, 0].imshow(imagenes_ruido[0][:, :, 0], cmap='viridis')
+    axes[1, 0].set_title("Real con ruido")
+    plt.colorbar(im, ax=axes[1, 0])
+
+    im = axes[1, 1].imshow(imagenes_ruido[0][:, :, 1], cmap='viridis')
+    axes[1, 1].set_title("Imag con ruido")
+    plt.colorbar(im, ax=axes[1, 1])
+
+    plt.tight_layout()
     plt.show()
 
     imagenes_ruido_variable = []
     imagenes_bien_variable = []
     for snr in snrs:
-        imagenes, imagenes_ruido = preprocesarDatos(data, 128, 16, snr_db)
-        imagenes_ruido_variable = imagenes_ruido_variable + imagenes_ruido
-        imagenes_bien_variable = imagenes_bien_variable + imagenes
+        imagenes_var, imagenes_ruido_var = preprocesarDatos(data, 128, 128, snr)
+        imagenes_ruido_variable = imagenes_ruido_variable + imagenes_ruido_var
+        imagenes_bien_variable = imagenes_bien_variable + imagenes_var
         print(f"Dataset combinado: {len(imagenes_ruido_variable)}")
 
     np.save(f'data/NIST_{dset}_imagenes.npy', imagenes)
