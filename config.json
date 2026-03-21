@@ -1,15 +1,16 @@
 {
   "KDR":
   {
-    "X": "data/NIST_h_AAplant_int_5G_imagenes_snr_5.npy",
+    "X": "data/NIST_h_AAplant_int_5G_imagenes_snr_10.npy",
     "Y": "data/NIST_h_AAplant_int_5G_imagenes.npy",
     "sModel": "DnCNN",
     "tModel": "DnCNN",
     "train": true,
-    "tDepth": 3,
+    "tDepth": 2,
     "sDepth": 2,
-    "sEpoch": 100,
-    "tEpoch": 200,
+    "sEpoch": 1,
+    "tEpoch": 1,
+    "plot_idx": 0,
     "lr": 0.01,
     "alpha": 0.7,
     "Features":
@@ -17,9 +18,13 @@
       "t_layers": -2,
       "s_layers": -2
     },
-    "patience": 10
+    "patience": 5
   },
   "Data": {
-    "Mixed": false
+    "Sint": false,
+    "Mixed": false,
+    "Stride": 16,
+    "Unica": false,
+    "Snr_db": 10
   }
 }
