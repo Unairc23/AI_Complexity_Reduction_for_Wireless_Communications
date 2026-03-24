@@ -1,8 +1,9 @@
-import argparse
 import json
 import os
+import datetime
 from glob import glob
 from operator import contains
+import openpyxl
 
 import torch
 import torch.nn as nn
@@ -38,61 +39,7 @@ MODEL_REGISTRY = {
 # ============================================== BSD500 Loader ========================================================
 
 # Todo: Eliminar / mover a otro lugar los metodos de las imagenes BSD500
-def load_bsd500_images(root_folder, size=(128, 128), grayscale=True):
-    paths = glob(os.path.join(root_folder, "*.jpg"))
-    images = []
 
-    for p in paths:
-        img = Image.open(p)
-
-        if grayscale:
-            img = img.convert("L")
-        else:
-            img = img.convert("RGB")
-
-        img = img.resize(size)
-        img = np.array(img, dtype=np.float32) / 255.0
-
-        if grayscale:
-            img = img[..., None]  # (H,W,1)
-
-        images.append(img)
-
-    return np.array(images)
-
-
-def add_gaussian_noise(images, sigma=25):
-    noise = np.random.randn(*images.shape) * (sigma / 255.0)
-    noisy = images + noise
-    noisy = np.clip(noisy, 0.0, 1.0)
-    return noisy
-
-
-def prepare_bsd500_dataset(conf):
-    """
-    Si no existen los .npy, los genera automáticamente desde BSD500
-    """
-    if os.path.exists(conf["KDR"]["X"]) and os.path.exists(conf["KDR"]["Y"]):
-        print("Dataset .npy encontrado. Cargando...")
-        return
-
-    print("Generando dataset desde BSD500...")
-
-    train_path = "data/BSDS500/images/train"
-    val_path = "data/BSDS500/images/val"
-
-    clean_train = load_bsd500_images(train_path, size=(128,128))
-    clean_val = load_bsd500_images(val_path, size=(128,128))
-
-    clean = np.concatenate([clean_train, clean_val], axis=0)
-
-    sigma = conf["KDR"].get("noise_sigma", 25)
-    noisy = add_gaussian_noise(clean, sigma=sigma)
-
-    np.save(conf["KDR"]["X"], noisy)
-    np.save(conf["KDR"]["Y"], clean)
-
-    print("Dataset generado correctamente.")
 
 class NPYDataset(Dataset):
     def __init__(self, X, Y, transform=None):
@@ -117,6 +64,7 @@ class NPYDataset(Dataset):
 
 # ========================================== Configurar torch / seed ===================================================
 device = torch.accelerator.current_accelerator().type if torch.accelerator.is_available() else "cpu"
+torch.cuda.empty_cache()
 
 torch.manual_seed(42)
 if device == 'cuda':
@@ -145,9 +93,9 @@ train_ds, val_ds, test_ds = random_split(
     [train_size, val_size, test_size]
 )
 
-train_loader = torch.utils.data.DataLoader(train_ds, batch_size=32, shuffle=True, num_workers=0)
-val_loader = torch.utils.data.DataLoader(val_ds, batch_size=32, shuffle=False, num_workers=0)
-test_loader = torch.utils.data.DataLoader(test_ds, batch_size=32, shuffle=False, num_workers=0)
+train_loader = torch.utils.data.DataLoader(train_ds, batch_size=64, shuffle=True, num_workers=0)
+val_loader = torch.utils.data.DataLoader(val_ds, batch_size=64, shuffle=False, num_workers=0)
+test_loader = torch.utils.data.DataLoader(test_ds, batch_size=64, shuffle=False, num_workers=0)
 
 # ====================================== Entrenamiento de los modelos =================================================
 def train(model, train_loader, epochs, learning_rate, device):
@@ -169,6 +117,10 @@ def train(model, train_loader, epochs, learning_rate, device):
 
             optimizer.zero_grad()
             outputs = model(X)
+
+            if (conf["Data"]["Unica"]):
+                Y = Y[:, :, 64, :]
+                outputs = outputs[:, :, 64, :]
 
             # outputs: Output of the network for the collection of images. A tensor of dimensionality batch_size x num_classes
             # X: The actual images. Vector of dimensionality batch_size
@@ -221,7 +173,12 @@ def train_knowledge_distillation(teacher, student, train_loader, epochs, learnin
             # Forward pass with the student model
             student_pred = student(X)
 
-            teacher_y_loss = mse_loss(teacher_pred, Y)
+            if (conf["Data"]["Unica"]):
+                Y = Y[:, :, 64, :]
+                teacher_pred = teacher_pred[:, :, 64, :]
+                student_pred = student_pred[:, :, 64, :]
+
+            # teacher_y_loss = mse_loss(teacher_pred, Y)
             student_y_loss = mse_loss(student_pred, Y)
 
             teacher_student_loss = mse_loss(student_pred, teacher_pred)
@@ -284,6 +241,10 @@ def train_feature_based_kd(teacher, student, train_loader, epochs, learning_rate
             student_pred = student(X)
             s_latent = student_features["latent"]
 
+            if (conf["Data"]["Unica"]):
+                Y = Y[:, :, 64, :]
+                student_pred = student_pred[:, :, 64, :]
+
             out_loss = mse_loss(student_pred, Y)
             kd_loss = cosine_kd_loss(s_latent, t_latent)
 
@@ -324,6 +285,11 @@ def evaluate(model, loader, device):
         for X, Y in loader:
             X, Y = X.to(device), Y.to(device)
             pred = model(X)
+
+            if (conf["Data"]["Unica"]):
+                Y = Y[:, :, 64, :]
+                pred = pred[:, :, 64, :]
+
             total_loss += mse(pred, Y).item()
 
     return total_loss / len(loader)
@@ -378,36 +344,43 @@ def load_model(model, path, device):
     else:
         print(f" No se encontró el archivo {path}, se inicializa un modelo nuevo.")
     return model
-# ==========================================Representar graficamente====================================================
-import matplotlib.pyplot as plt
-import numpy as np
-import torch
 
+def estimate_snr_db(noisy, clean, eps=1e-12):
+    signal_power = np.mean(clean ** 2)
+    noise_power = np.mean((noisy - clean) ** 2)
+    return 10.0 * np.log10((signal_power + eps) / (noise_power + eps))
+
+def calcular_ruido(señal_norm, señal_ruido_norm):
+    ruido = señal_ruido_norm - señal_norm
+    p_señal = np.mean(np.abs(señal_norm) ** 2)
+    p_ruido = np.mean(np.abs(ruido) ** 2)
+    if p_ruido == 0:
+        return np.inf
+    return 10 * np.log10(p_señal / p_ruido)
+
+# ==========================================Representar graficamente====================================================
+# TODO: Igual mover metodos como este a una clase especifica para evitar centrar todo aquí
 def graficar(model, dataset, device, idx=0, modelName="modelo", modo="magnitud"):
-    """
-    modo:
-        - "magnitud"  → muestra |z|
-        - "canales"   → muestra real e imaginario por separado
-    """
 
     model.eval()
 
-    x, y = dataset[idx]                # (2, H, W)
-    x = x.unsqueeze(0).to(device)      # (1, 2, H, W)
+    x, y = dataset[idx]                # (C, H, W)
+    x_in = x.unsqueeze(0).to(device)   # (1, C, H, W)
 
     with torch.no_grad():
-        y_hat = model(x)
+        y_pred = model(x_in)
 
-    # Quitar batch
-    x = x.squeeze(0).cpu().numpy()      # (2, H, W)
-    y = y.squeeze(0).cpu().numpy()
-    y_hat = y_hat.squeeze(0).cpu().numpy()
+    # Mover a numpy
+    x = x.cpu().numpy()
+    y = y.cpu().numpy()
+    np.save(f"{modelName}_input.npy", x)
+    y_pred = y_pred.squeeze(0).cpu().numpy()
 
     if modo == "magnitud":
         # Calcular magnitud
         x_vis = np.sqrt(x[0]**2 + x[1]**2)
         y_vis = np.sqrt(y[0]**2 + y[1]**2)
-        yhat_vis = np.sqrt(y_hat[0]**2 + y_hat[1]**2)
+        ypred_vis = np.sqrt(y_pred[0]**2 + y_pred[1]**2)
 
         fig, axs = plt.subplots(1, 3, figsize=(12, 4))
 
@@ -417,7 +390,7 @@ def graficar(model, dataset, device, idx=0, modelName="modelo", modo="magnitud")
         axs[1].imshow(y_vis, cmap="viridis")
         axs[1].set_title("Objetivo limpio (|z|)")
 
-        axs[2].imshow(yhat_vis, cmap="viridis")
+        axs[2].imshow(ypred_vis, cmap="viridis")
         axs[2].set_title(f"Reconstrucción {modelName} (|z|)")
 
         for ax in axs:
@@ -444,10 +417,10 @@ def graficar(model, dataset, device, idx=0, modelName="modelo", modo="magnitud")
         axs[1, 1].set_title("Objetivo - Imaginario")
 
         # Reconstrucción
-        axs[2, 0].imshow(y_hat[0], cmap="viridis")
+        axs[2, 0].imshow(y_pred[0], cmap="viridis")
         axs[2, 0].set_title(f"Reconstrucción {modelName} - Real")
 
-        axs[2, 1].imshow(y_hat[1], cmap="viridis")
+        axs[2, 1].imshow(y_pred[1], cmap="viridis")
         axs[2, 1].set_title(f"Reconstrucción {modelName} - Imaginario")
 
         for ax in axs.flatten():
@@ -457,26 +430,66 @@ def graficar(model, dataset, device, idx=0, modelName="modelo", modo="magnitud")
         plt.show()
 
 def plot_training_curves(histories, title="Training curves"):
-    """
-    histories = {
-        "modelo1": (train_list, val_list),
-        "modelo2": (train_list, val_list),
-    }
-    """
     plt.figure(figsize=(10,6))
+    eps = 1e-12
 
     for name, (train_hist, val_hist) in histories.items():
-        plt.plot(train_hist, linestyle="--", label=f"{name} - Train")
-        plt.plot(val_hist, linestyle="-", label=f"{name} - Val")
+        train_vals = np.maximum(np.asarray(train_hist, dtype=np.float64), eps)
+        val_vals = np.maximum(np.asarray(val_hist, dtype=np.float64), eps)
+        plt.plot(train_vals, linestyle="--", label=f"{name} - Train")
+        plt.plot(val_vals, linestyle="-", label=f"{name} - Val")
 
     plt.xlabel("Epoch")
     plt.ylabel("MSE Loss")
-    plt.ylim(0.003, 0)
+    plt.yscale("log")
     plt.title(title)
     plt.legend()
     plt.grid(True)
     plt.show()
 
+def guardar_training_curves(histories):
+
+    wb = openpyxl.Workbook()
+
+    ws_wide = wb.active
+    ws_wide.title = "wide"
+
+    header = ["epoch"]
+    max_len = 0
+    normalized = {}
+
+    for name, (train_hist, val_hist) in histories.items():
+        train_vals = list(train_hist)
+        val_vals = list(val_hist)
+        normalized[name] = (train_vals, val_vals)
+        max_len = max(max_len, len(train_vals), len(val_vals))
+        header.extend([f"{name}_train", f"{name}_val"])
+
+    ws_wide.append(header)
+
+    for epoch_idx in range(max_len):
+        row = [epoch_idx + 1]
+        for name in histories.keys():
+            train_vals, val_vals = normalized[name]
+            train_value = train_vals[epoch_idx] if epoch_idx < len(train_vals) else None
+            val_value = val_vals[epoch_idx] if epoch_idx < len(val_vals) else None
+            row.extend([train_value, val_value])
+        ws_wide.append(row)
+
+    ws_long = wb.create_sheet(title="long")
+    ws_long.append(["model", "epoch", "train_loss", "val_loss"])
+
+    for name, (train_vals, val_vals) in normalized.items():
+        local_max = max(len(train_vals), len(val_vals))
+        for epoch_idx in range(local_max):
+            train_value = train_vals[epoch_idx] if epoch_idx < len(train_vals) else None
+            val_value = val_vals[epoch_idx] if epoch_idx < len(val_vals) else None
+            ws_long.append([name, epoch_idx + 1, train_value, val_value])
+
+    fechaHora = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    output_path = f"results/resultados_{fechaHora}.xlsx"
+    wb.save(output_path)
+    print(f"Curvas de entrenamiento guardadas en {output_path}")
 
 if __name__ == "__main__":
     # Creo que esta linea solo es encesaria en windows, linux hace un fork
@@ -510,21 +523,43 @@ if __name__ == "__main__":
         print("================ Entrenando no_KD_student ================")
         student_hist = train(model=student, train_loader=train_loader, epochs=conf["KDR"]["sEpoch"], learning_rate=conf["KDR"]["lr"],
               device=device)
-        torch.save(teacher.state_dict(), f"model/{tModel}.pth")
-        torch.save(student.state_dict(), f"model/{sModel}.pth")
+        torch.save(teacher.state_dict(), f"model/teacher_{tModel}.pth")
+        torch.save(student.state_dict(), f"model/student_{sModel}.pth")
     else:
         teacher = load_model(teacher, path=f"model/{tModel}.pth", device=device)
         student = load_model(student, path=f"model/{sModel}.pth", device=device)
 
+    # Comparar tamaño teacher / modelo sin destilar
     teacher_params = "{:,}".format(sum(p.numel() for p in teacher.parameters()))
+    teacher_size = os.path.getsize(f"model/teacher_{tModel}.pth") / 1024 ** 2
     print(f"Teacher Params: {teacher_params}")
-    student_params = "{:,}".format(sum(p.numel() for p in student.parameters()))
-    print(f"Student Params: {student_params}")
+    print(f"Teacher Size: {teacher_size}")
 
-    # Comparacion entre teacher y modelo sin destilar
-    idx = random.randint(0, len(test_ds) - 1)
+    student_params = "{:,}".format(sum(p.numel() for p in student.parameters()))
+    student_size = os.path.getsize(f"model/student_{tModel}.pth") / 1024 ** 2
+    print(f"Student Params: {student_params}")
+    print(f"Student Size: {student_size}")
+
+    print(f"Diferencia de tamaño: {teacher_size / student_size:.2f}x ({teacher_size:.2f}MB -> {student_size:.2f}MB)")
+
+    # Comparacion de resultados entre teacher y modelo sin destilar
+    idx = int(conf["KDR"].get("plot_idx", 0))
+    idx = max(0, min(idx, len(test_ds) - 1))
+    print(f"Mostrando muestra de test idx={idx}")
     graficar(student, test_ds, device, idx=idx, modelName="no_kd_student", modo="canales")
     graficar(teacher, test_ds, device, idx=idx, modelName="teacher", modo="canales")
+
+    # xs = []
+    snrs = []
+    for data in test_ds:
+        x, y = data
+        snr_db = calcular_ruido(señal_ruido_norm=x.numpy(), señal_norm=y.numpy())
+        snrs.append(snr_db)
+        xs.append(x.numpy()[1,:,:])
+    print(f"SNR medio del dataset de test: {np.mean(snrs):.2f} dB")
+    # xs = np.stack(xs)
+    # np.save("input.npy", xs)
+    # print(f"Guardadas {xs.shape} muestras X en input.npy")
 
     # ============================================== KD clasica ========================================================
     print("================ Entrenando kd_student ================")
@@ -554,10 +589,11 @@ if __name__ == "__main__":
 
     graficar(kd_student_feature, test_ds, device, idx=idx, modelName="kd_student_feature", modo="canales")
 
-    plot_training_curves({
+    historial = {
         "Teacher": teacher_hist,
         "Student": student_hist,
         "KD": kd_hist,
         "FKD": fkd_hist
-    })
-
+    }
+    plot_training_curves(historial)
+    guardar_training_curves(historial)

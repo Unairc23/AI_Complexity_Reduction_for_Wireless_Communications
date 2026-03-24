@@ -26,6 +26,7 @@ def preprocesarDatos(data, window, stride, snr_db=5):
     imag = np.nan_to_num(imag, nan=0.0)
 
     señal = real + 1j * imag
+    # señal_norm, _ = normalizar_complejo(señal)
 
     imagenes = []
     imagenes_ruido = []
@@ -34,23 +35,20 @@ def preprocesarDatos(data, window, stride, snr_db=5):
     for t in range(0, señal.shape[0] - window + 1, stride):
 
         bloque = señal[t:t + window, :]
-
-        # Normaliza el bloque limpio en [-1, 1] y reutiliza esa escala para el bloque con ruido.
-        bloque_norm, stats = normalizar_complejo(bloque)
+        bloque, _ = normalizar_complejo(bloque)
 
         # ---- LIMPIO ----
-        real_clean = np.real(bloque_norm)
-        imag_clean = np.imag(bloque_norm)
+        real_clean = np.real(bloque)
+        imag_clean = np.imag(bloque)
 
         # ---- CON RUIDO ----
         bloque_ruido = añadir_awgn_complejo(bloque, snr_db)
-        bloque_ruido_norm, _ = normalizar_complejo(bloque_ruido, stats=stats, clip=True)
-        real_ruido = np.real(bloque_ruido_norm)
-        imag_ruido = np.imag(bloque_ruido_norm)
+        real_ruido = np.real(bloque_ruido)
+        imag_ruido = np.imag(bloque_ruido)
 
         img = np.stack([real_clean, imag_clean], axis=-1)
         img_ruido = np.stack([real_ruido, imag_ruido], axis=-1)
-        snr = calcular_ruido(bloque_norm, bloque_ruido_norm)
+        snr = calcular_ruido(img, img_ruido)
 
         imagenes.append(img)
         imagenes_ruido.append(img_ruido)
@@ -95,6 +93,10 @@ def normalizar_complejo(señal, stats=None, clip=False):
 
     return real_norm + 1j * imag_norm, (min_r, max_r, min_i, max_i)
 
+def normalizar_por_potencia(bloque):
+    potencia = np.sqrt(np.mean(np.abs(bloque) ** 2))
+    return bloque / (potencia + 1e-12)
+
 def preprocesarDatosSynt(data, window, stride):
     real = np.real(data)
     imag = np.imag(data)
@@ -106,7 +108,6 @@ def preprocesarDatosSynt(data, window, stride):
     imagenes = []
 
     señal = real + 1j * imag
-    señal, _ = normalizar_complejo(señal)
 
     for t in range(0, señal.shape[1] - window + 1, stride):
         bloque = señal[:, t:t + window]
@@ -121,24 +122,49 @@ def preprocesarDatosSynt(data, window, stride):
 
     return np.array(imagenes)
 
-def plot_señales(imagenes, imagenes_ruido):
+def plot_señales(imagenes, imagenes_ruido, idx=0):
     fig, axes = plt.subplots(2, 2, figsize=(10, 8))
 
-    im = axes[0, 0].imshow(imagenes[0][:, :, 0], cmap='viridis')
+    im = axes[0, 0].imshow(imagenes[idx][:, :, 0], cmap='viridis')
     axes[0, 0].set_title("Real limpia")
     plt.colorbar(im, ax=axes[0, 0])
 
-    im = axes[0, 1].imshow(imagenes[0][:, :, 1], cmap='viridis')
+    im = axes[0, 1].imshow(imagenes[idx][:, :, 1], cmap='viridis')
     axes[0, 1].set_title("Imag limpia")
     plt.colorbar(im, ax=axes[0, 1])
 
-    im = axes[1, 0].imshow(imagenes_ruido[0][:, :, 0], cmap='viridis')
+    im = axes[1, 0].imshow(imagenes_ruido[idx][:, :, 0], cmap='viridis')
     axes[1, 0].set_title("Real con ruido")
     plt.colorbar(im, ax=axes[1, 0])
 
-    im = axes[1, 1].imshow(imagenes_ruido[0][:, :, 1], cmap='viridis')
+    im = axes[1, 1].imshow(imagenes_ruido[idx][:, :, 1], cmap='viridis')
     axes[1, 1].set_title("Imag con ruido")
     plt.colorbar(im, ax=axes[1, 1])
+
+    plt.tight_layout()
+    plt.show()
+
+def plot_2d(imagenes, imagenes_ruido, idx=0):
+    if idx < 0 or idx >= len(imagenes) or idx >= len(imagenes_ruido):
+        raise ValueError(f"idx fuera de rango: {idx}")
+
+    if imagenes[idx].shape[1] <= 64 or imagenes_ruido[idx].shape[1] <= 64:
+        raise ValueError("No existe el subportador 64 en las imagenes")
+
+    fig, axes = plt.subplots(2, 2, figsize=(10, 8), sharex=True)
+    x = np.arange(imagenes[idx].shape[0])
+
+    axes[0, 0].plot(x, imagenes[idx][64, :, 0])
+    axes[0, 0].set_title("Real limpia")
+
+    axes[0, 1].plot(x, imagenes[idx][64, :, 1])
+    axes[0, 1].set_title("Imag limpia")
+
+    axes[1, 0].plot(x, imagenes_ruido[idx][64, :, 0])
+    axes[1, 0].set_title("Real con ruido")
+
+    axes[1, 1].plot(x, imagenes_ruido[idx][64, :, 1])
+    axes[1, 1].set_title("Imag con ruido")
 
     plt.tight_layout()
     plt.show()
@@ -146,7 +172,7 @@ def plot_señales(imagenes, imagenes_ruido):
 if __name__ == '__main__':
 
     if (conf["Data"]["Sint"] == False):
-        dset = 'h_AAplant_int_5G'
+        dset = conf["Data"]["Dset"]
         dsets = ['h_AAplant_int_5G', 'h_AAplant_int_2G', 'h_AAplant_5G', 'h_AAplant_2G', 'h_Boil_2G', 'h_Boil_5G', 'h_GBurg_2G', 'h_GBurg_5G']
         snr_db = conf["Data"]["Snr_db"]
         snrs = [5, 10, 20]
@@ -168,7 +194,8 @@ if __name__ == '__main__':
         snr_medio = np.median(snrs)
         print(f"SNR medio de las imagenes con ruido: {snr_medio:.2f} dB")
 
-        plot_señales(imagenes, imagenes_ruido)
+        plot_señales(imagenes, imagenes_ruido, 261)
+        plot_2d(imagenes, imagenes_ruido, 261)
 
         np.save(f'data/NIST_{dset}_imagenes.npy', imagenes)
         print(f"Imagenes guardadas en data/NIST_{dset}_imagenes.npy")
