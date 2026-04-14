@@ -16,7 +16,7 @@ import torch.nn.functional as F
 import random, numpy as np
 
 # Todo: Implementar / quitar modelos no compatibles con regresion
-from modelos import DeepNN, LightNN, LightNN_Adaptada, DeepNN_Adaptada, load_resnet, DnCNN, ResNetDenoiser
+from modelos import DeepNN, LightNN, LightNN_Adaptada, DeepNN_Adaptada, load_resnet, DnCNN, ResNetDenoiser, UNetDenoiser
 from utils import *
 from Cuantizacion import *
 
@@ -38,7 +38,7 @@ MODEL_REGISTRY = {
         "Teacher": lambda: ResNetDenoiser(in_channels=2, base_channels=32)
     },
     "UNet": {
-        "Student": lambda: UNetDenoiser(in_channels=2, base_channels=32),
+        "Student": lambda: UNetDenoiser(in_channels=2, base_channels=8),
         "Teacher": lambda: UNetDenoiser(in_channels=2, base_channels=64)
     }
 }
@@ -168,6 +168,7 @@ def train_knowledge_distillation(teacher, student, train_loader, epochs, learnin
 
     for epoch in range(epochs):
         running_loss = 0.0
+        student_running_loss = 0.0 # Usado simplemente para ver la diferencia train/val, usando la del KD esta siempre sera mejor
         for X, Y in train_loader:
             X, Y = X.to(device), Y.to(device)
 
@@ -199,8 +200,9 @@ def train_knowledge_distillation(teacher, student, train_loader, epochs, learnin
             loss.backward()
             optimizer.step()
             running_loss += loss.item()
+            student_running_loss += student_y_loss.item()
 
-        epoch_loss = running_loss / len(train_loader)
+        epoch_loss = student_running_loss / len(train_loader)
         val_loss = evaluate(student, val_loader, device)
 
         train_history.append(epoch_loss)
@@ -233,6 +235,7 @@ def train_feature_based_kd(teacher, student, train_loader, epochs, learning_rate
 
     for epoch in range(epochs):
         running_loss = 0.0
+        student_running_loss = 0.0
         for X, Y in train_loader:
             X, Y = X.to(device), Y.to(device)
             optimizer.zero_grad()
@@ -245,7 +248,7 @@ def train_feature_based_kd(teacher, student, train_loader, epochs, learning_rate
 
             # Forward pass with the student model
             student_pred = student(X)
-            s_latent = student_features["latent"]
+            s_latent = fkd_features["latent"]
 
             if (conf["Data"]["Unica"]):
                 Y = Y[:, :, 64, :]
@@ -258,9 +261,10 @@ def train_feature_based_kd(teacher, student, train_loader, epochs, learning_rate
             loss.backward()
             optimizer.step()
 
+            student_running_loss += out_loss.item()
             running_loss += loss.item()
 
-        epoch_loss = running_loss / len(train_loader)
+        epoch_loss = student_running_loss / len(train_loader)
         val_loss = evaluate(student, val_loader, device)
 
         train_history.append(epoch_loss)
@@ -366,16 +370,7 @@ if __name__ == "__main__":
     teacher_features = {}
     student_features = {}
 
-    # Función para extraer features intermedias del modelo sin necesitar una arquitectura especifica o modificarlo
-    def save_activation(container, name):
-        def hook(module, input, output):
-            container[name] = output
-        return hook
-
-    # TODO: Ahora mismo feature based solo funciona con dncnn, cualquier otro modelo rompe
-    teacher.dncnn[conf["KDR"]["Features"]["t_layers"]].register_forward_hook(
-        save_activation(teacher_features, "latent")
-    )
+    register_hook(teacher, tModel, teacher_features, "latent", conf["KDR"]["Features"]["t_layers"])
 
     if conf["KDR"]["train"]:
         if tModel != "resnet18": # Los modelos resnet usados ya están preentrenados con CIFAR10
@@ -438,10 +433,11 @@ if __name__ == "__main__":
         torch.save(student_q.state_dict(), "model/student_q.pth")
 
         quantized_teacher = os.path.getsize("model/teacher_q.pth") / 1024 ** 2
-        print(f"Quantized Teacher Params: {quantized_teacher}")
+        print(f"Quantized Teacher Size: {quantized_teacher}")
         quantized_student = os.path.getsize("model/student_q.pth") / 1024 ** 2
-        print(f"Quantized Student Params: {quantized_student}\n")
-
+        print(f"Quantized Student Size: {quantized_student}\n")
+        print(f"Diferencia de tamaño teacher: {quantized_teacher / teacher_size:.2f}x ({quantized_teacher:.2f}MB -> {teacher_size:.2f}MB)")
+        print(f"Diferencia de tamaño student: {quantized_student / student_size:.2f}x ({quantized_student:.2f}MB -> {student_size:.2f}MB)")
 
         idx = int(conf["KDR"].get("plot_idx", 0))
         idx = max(0, min(idx, len(test_ds) - 1))
@@ -451,18 +447,14 @@ if __name__ == "__main__":
 
         mseTq = evaluate(teacher_q, val_loader, cpu)
         mseSq = evaluate(student_q, val_loader, cpu)
-        print(f"MSE teacher: {mseTq:.8f}")
-        print(f"MSE student: {mseSq:.8f}")
-        print(f"Diferencia Teacher: {mseT - mseTq:.8f}")
-        print(f"Diferencia Student: {mseS - mseSq:.8f}")
+        print(f"MSE teacherq: {mseTq:.8f} / teacher_noQ: {mseT:.8f}: ")
+        print(f"MSE studentq: {mseSq:.8f} / student_noQ: {mseS:.8f}: ")
+        print(f"Diferencia Teacher: {mseTq - mseT:.8f} ({(mseTq - mseT)/mseT:.2f}%)")
+        print(f"Diferencia Student: {mseSq - mseS:.8f} ({(mseSq - mseS)/mseS:.2f}%)")
 
     # ============================================== KD clasica ========================================================
     print("================ Entrenando kd_student ================")
     kd_student = MODEL_REGISTRY[sModel]["Student"]().to(device)
-
-    kd_student.dncnn[conf["KDR"]["Features"]["s_layers"]].register_forward_hook(
-        save_activation(student_features, "latent")
-    )
 
     kd_hist = train_knowledge_distillation(teacher=teacher, student=kd_student, train_loader=train_loader,
                                  epochs=conf["KDR"]["sEpoch"], learning_rate=conf["KDR"]["lr"], device=device,
@@ -475,9 +467,8 @@ if __name__ == "__main__":
     print("================ Entrenando feature_kd_student ================")
     kd_student_feature = MODEL_REGISTRY[sModel]["Student"]().to(device)
 
-    kd_student_feature.dncnn[conf["KDR"]["Features"]["s_layers"]].register_forward_hook(
-        save_activation(student_features, "latent")
-    )
+    fkd_features = {}
+    register_hook(kd_student_feature, sModel, fkd_features, "latent", conf["KDR"]["Features"]["s_layers"])
 
     fkd_hist = train_feature_based_kd(teacher=teacher, student=kd_student_feature, train_loader=train_loader, epochs=conf["KDR"]["sEpoch"],
                            learning_rate=conf["KDR"]["lr"], device=device, alpha=conf["KDR"]["alpha"])

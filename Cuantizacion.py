@@ -1,8 +1,12 @@
+import json
+
 from torch.quantization.quantize_fx import prepare_fx, convert_fx
 import torch
 import platform
-from torch.ao.quantization import QConfigMapping
+from torch.ao.quantization import QConfigMapping, QConfig, MinMaxObserver, PerChannelMinMaxObserver
 
+with open("config.json", "r", encoding="utf-8") as f:
+    conf = json.load(f)
 
 def cuantizar_estatica(model, device, calibration_loader, num_batches=10):
 
@@ -27,22 +31,25 @@ def cuantizar_estatica(model, device, calibration_loader, num_batches=10):
     # Cuantización estatica solo funciona en CPU
     model = model.eval().cpu()
 
-    qconfig_mapping = QConfigMapping().set_global(
-        torch.quantization.get_default_qconfig(backend) # Default config es INT8
-    )
+    if (conf["Cuant"]["mode"] == 'int8'):
+        qconfig_mapping = QConfigMapping().set_global(
+            torch.quantization.get_default_qconfig(backend) # Default config es INT8
+        )
 
-    example_inputs = (torch.randn(1, 3, 224, 224),)
+        example_inputs = (torch.randn(1, 3, 224, 224),)
 
-    model_prepared = prepare_fx(model, qconfig_mapping, example_inputs)
+        model_prepared = prepare_fx(model, qconfig_mapping, example_inputs)
 
-    print(f"Calibrando con {num_batches} batches...")
-    with torch.no_grad():
-        for i, (inputs, _) in enumerate(calibration_loader):
-            model_prepared(inputs.cpu())
-            if i + 1 >= num_batches:
-                break
-    print("Calibración completada.")
+        print(f"Calibrando con {num_batches} batches...")
+        with torch.no_grad():
+            for i, (inputs, _) in enumerate(calibration_loader):
+                model_prepared(inputs.cpu())
+                if i + 1 >= num_batches:
+                    break
+        print("Calibración completada.")
 
-    model_quantized = convert_fx(model_prepared)
+        model_quantized = convert_fx(model_prepared)
+    else:
+        model_quantized = model.half() # TODO: Ahora mismo esto crea problemas porque cambia el tipo de pesos
 
     return model_quantized.to(device)

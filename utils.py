@@ -1,8 +1,12 @@
+import json
 import numpy as np
 import torch
 from matplotlib import pyplot as plt
 import datetime
 import openpyxl
+
+with open("config.json") as f:
+    conf = json.load(f)
 
 def calcular_ruido(señal_norm, señal_ruido_norm):
     ruido = señal_ruido_norm - señal_norm
@@ -27,7 +31,6 @@ def graficar(model, dataset, device, idx=0, modelName="modelo", modo="magnitud")
     # Mover a numpy
     x = x.cpu().numpy()
     y = y.cpu().numpy()
-    np.save(f"{modelName}_input.npy", x)
     y_pred = y_pred.squeeze(0).cpu().numpy()
 
     if modo == "magnitud":
@@ -140,7 +143,38 @@ def guardar_training_curves(histories):
             val_value = val_vals[epoch_idx] if epoch_idx < len(val_vals) else None
             ws_long.append([name, epoch_idx + 1, train_value, val_value])
 
+    ws_params = wb.create_sheet(title="params")
+    flat_conf = flatten_dict(conf)
+    for name, value in flat_conf.items():
+        ws_params.append([name, value])
+
     fechaHora = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    output_path = f"results/resultados_{fechaHora}.xlsx"
+    output_path = f"results/t{conf["KDR"]["tDepth"]}_s{conf["KDR"]["sDepth"]}_{conf["Data"]["Snr_db"]}db_{fechaHora}.xlsx"
     wb.save(output_path)
     print(f"Curvas de entrenamiento guardadas en {output_path}")
+
+def flatten_dict(d, parent_key="", sep="."):
+    items = []
+    for k, v in d.items():
+        new_key = f"{parent_key}{sep}{k}" if parent_key else k
+        if isinstance(v, dict):
+            items.extend(flatten_dict(v, new_key, sep=sep).items())
+        else:
+            items.append((new_key, v))
+    return dict(items)
+
+def register_hook(model, model_name, container, name, layers=-2):
+    if model_name == "DnCNN":
+        layer = model.dncnn[layers] # Igual cambiar esto tambien para no usar un indice que se elige manualmente
+        print(layer)
+    elif model_name == "UNet":
+        layer = model.bottleneck
+    else:
+        raise ValueError(f"Modelo {model_name} no soporta feature hooks")
+    layer.register_forward_hook(save_activation(container, name))
+
+# Función para extraer features intermedias del modelo sin necesitar una arquitectura especifica o modificarlo
+def save_activation(container, name):
+    def hook(module, input, output):
+        container[name] = output
+    return hook

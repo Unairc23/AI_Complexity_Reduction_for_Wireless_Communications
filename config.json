@@ -3,9 +3,9 @@
   {
     "X": "data/NIST_h_GBurg_5G_imagenes_snr_25.npy",
     "Y": "data/NIST_h_GBurg_5G_imagenes.npy",
-    "sModel": "DnCNN",
-    "tModel": "DnCNN",
-    "train": false,
+    "sModel": "UNet",
+    "tModel": "UNet",
+    "train": true,
     "cuantizar": false,
     "tDepth": 17,
     "tEpoch": 200,
@@ -17,7 +17,7 @@
     "alpha": 0.7,
     "Features":
     {
-      "t_layers": -2,
+      "t_layers": 2,
       "s_layers": -2
     },
     "patience": 7
@@ -29,5 +29,8 @@
     "Stride": 1,
     "Unica": true,
     "Snr_db": 25
+  },
+  "Cuant": {
+    "mode": "int8"
   }
 }
