@@ -1,34 +1,38 @@
 {
   "KDR":
   {
-    "X": "data/NIST_h_GBurg_5G_imagenes_snr_25.npy",
-    "Y": "data/NIST_h_GBurg_5G_imagenes.npy",
+    "X": "data/Datos_Sinteticos/TDL_D_85ns_fd1000_SNR20_h_est128.npy",
+    "Y": "data/Datos_Sinteticos/TDL_D_85ns_fd1000_SNR20_h_real128.npy",
     "sModel": "UNet",
     "tModel": "UNet",
-    "train": true,
+    "train": false,
+    "KD": false,
+    "FKD": true,
+    "features": "spatial",
+    "AKD": false,
     "cuantizar": false,
     "tDepth": 17,
-    "tEpoch": 200,
+    "tEpoch": 1000,
     "sDepth": 2,
-    "sEpoch": 100,
+    "sEpoch": 1000,
     "plot_idx": 0,
     "lr": 0.0001,
-    "batch_size": 16,
+    "batch_size": 32,
     "alpha": 0.7,
     "Features":
     {
-      "t_layers": 2,
+      "t_layers": -2,
       "s_layers": -2
     },
     "patience": 7
   },
   "Data": {
     "Dset": "h_GBurg_5G",
-    "Sint": false,
+    "Sint": true,
     "Mixed": false,
-    "Stride": 1,
-    "Unica": true,
-    "Snr_db": 25
+    "Stride": 128,
+    "Unica": false,
+    "Snr_db": 20
   },
   "Cuant": {
     "mode": "int8"

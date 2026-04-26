@@ -192,6 +192,7 @@ class DeepNN_Adaptada(nn.Module):
         return x
 
 # https://github.com/opendenoising/opendenoising-benchmark/tree/master
+# No se yo como ira este modelo con ATKD, porque no tiene jerarquia encoder/bottleneck/decoder
 class DnCNN(nn.Module):
     def __init__(self, depth=5, n_filters=64, kernel_size=3, n_channels=2):
         super(DnCNN, self).__init__()

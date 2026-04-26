@@ -15,7 +15,7 @@ def cargarDatos(dset='h_AAplant_int_5G'):
     return data
 
 def preprocesarDatos(data, window, stride, snr_db=5):
-    data_clean = data[:, :128]
+    data_clean = data[:, :window]
     print(f"Eliminando valores τ para evitar NaN: {data_clean.shape}")
 
     real = data_clean['real']
@@ -148,22 +148,22 @@ def plot_2d(imagenes, imagenes_ruido, idx=0):
     if idx < 0 or idx >= len(imagenes) or idx >= len(imagenes_ruido):
         raise ValueError(f"idx fuera de rango: {idx}")
 
-    if imagenes[idx].shape[1] <= 64 or imagenes_ruido[idx].shape[1] <= 64:
+    if imagenes[idx].shape[1] <= 32 or imagenes_ruido[idx].shape[1] <= 32:
         raise ValueError("No existe el subportador 64 en las imagenes")
 
     fig, axes = plt.subplots(2, 2, figsize=(10, 8), sharex=True)
     x = np.arange(imagenes[idx].shape[0])
 
-    axes[0, 0].plot(x, imagenes[idx][64, :, 0])
+    axes[0, 0].plot(x, imagenes[idx][32, :, 0])
     axes[0, 0].set_title("Real limpia")
 
-    axes[0, 1].plot(x, imagenes[idx][64, :, 1])
+    axes[0, 1].plot(x, imagenes[idx][32, :, 1])
     axes[0, 1].set_title("Imag limpia")
 
-    axes[1, 0].plot(x, imagenes_ruido[idx][64, :, 0])
+    axes[1, 0].plot(x, imagenes_ruido[idx][32, :, 0])
     axes[1, 0].set_title("Real con ruido")
 
-    axes[1, 1].plot(x, imagenes_ruido[idx][64, :, 1])
+    axes[1, 1].plot(x, imagenes_ruido[idx][32, :, 1])
     axes[1, 1].set_title("Imag con ruido")
 
     plt.tight_layout()
@@ -194,8 +194,8 @@ if __name__ == '__main__':
         snr_medio = np.median(snrs)
         print(f"SNR medio de las imagenes con ruido: {snr_medio:.2f} dB")
 
-        plot_señales(imagenes, imagenes_ruido, 261)
-        plot_2d(imagenes, imagenes_ruido, 261)
+        plot_señales(imagenes, imagenes_ruido, 0)
+        plot_2d(imagenes, imagenes_ruido, 0)
 
         np.save(f'data/NIST_{dset}_imagenes.npy', imagenes)
         print(f"Imagenes guardadas en data/NIST_{dset}_imagenes.npy")

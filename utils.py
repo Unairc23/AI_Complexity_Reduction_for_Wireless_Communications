@@ -1,6 +1,7 @@
 import json
 import numpy as np
 import torch
+import torch.nn.functional as F
 from matplotlib import pyplot as plt
 import datetime
 import openpyxl
@@ -18,7 +19,7 @@ def calcular_ruido(señal_norm, señal_ruido_norm):
 
 # ========================================REPRESENTACION / GUARDADO DATOS===============================================
 
-def graficar(model, dataset, device, idx=0, modelName="modelo", modo="magnitud"):
+def graficar(model, dataset, device, idx=0, modelName="modelo", modo="unico"):
 
     model.eval()
 
@@ -33,24 +34,22 @@ def graficar(model, dataset, device, idx=0, modelName="modelo", modo="magnitud")
     y = y.cpu().numpy()
     y_pred = y_pred.squeeze(0).cpu().numpy()
 
-    if modo == "magnitud":
-        # Calcular magnitud
-        x_vis = np.sqrt(x[0]**2 + x[1]**2)
-        y_vis = np.sqrt(y[0]**2 + y[1]**2)
-        ypred_vis = np.sqrt(y_pred[0]**2 + y_pred[1]**2)
+    if modo == "unico":
+        fig, axs = plt.subplots(3, 1, figsize=(8, 12))
 
-        fig, axs = plt.subplots(1, 3, figsize=(12, 4))
+        # Entrada
+        axs[0].imshow(x[0], cmap="viridis")
+        axs[0].set_title("Entrada")
 
-        axs[0].imshow(x_vis, cmap="viridis")
-        axs[0].set_title("Entrada ruidosa (|z|)")
+        # Objetivo
+        axs[1].imshow(y[0], cmap="viridis")
+        axs[1].set_title("Objetivo")
 
-        axs[1].imshow(y_vis, cmap="viridis")
-        axs[1].set_title("Objetivo limpio (|z|)")
+        # Reconstrucción
+        axs[2].imshow(y_pred[0], cmap="viridis")
+        axs[2].set_title(f"Reconstrucción {modelName}")
 
-        axs[2].imshow(ypred_vis, cmap="viridis")
-        axs[2].set_title(f"Reconstrucción {modelName} (|z|)")
-
-        for ax in axs:
+        for ax in axs.flatten():
             ax.axis("off")
 
         plt.tight_layout()
@@ -163,6 +162,8 @@ def flatten_dict(d, parent_key="", sep="."):
             items.append((new_key, v))
     return dict(items)
 
+# ======================================== FB/AT KD ===============================================
+
 def register_hook(model, model_name, container, name, layers=-2):
     if model_name == "DnCNN":
         layer = model.dncnn[layers] # Igual cambiar esto tambien para no usar un indice que se elige manualmente
@@ -178,3 +179,28 @@ def save_activation(container, name):
     def hook(module, input, output):
         container[name] = output
     return hook
+
+def register_hooks_at(model, feature_dict):
+    def make_hook(name):
+        def hook(module, input, output):
+            feature_dict[name] = output
+        return hook
+
+    try:
+        model.enc1.register_forward_hook(make_hook("enc1"))
+        model.enc2.register_forward_hook(make_hook("enc2"))
+        model.bottleneck.register_forward_hook(make_hook("bottleneck"))
+    except:
+        print("Asegurate de que el modelo tiene las capas enc1, enc2 y bottleneck")
+
+def attention_map(feat):
+    return F.normalize(feat.pow(2).mean(dim=1, keepdim=True).flatten(1), dim=1)
+
+# Esto revisalo, no loo hace exactamente igual en https://github.com/alexlopezcifuentes/Distillation-Attention/blob/main/Distillation%20Zoo/AT.py
+def attention_transfer_loss(s_feat, t_feat):
+    if s_feat.shape[2:] != t_feat.shape[2:]: # Realmente esto es un poco por si usas modelos condiferentes arquitecturas,
+        # porque como tal al tener la misma arquitectura per ocon diferentes tamaños estos modelos tendrán las mismas
+        # dimensiones en [H,W], lo que tiene mismatch es C (los modelos tienen shape [B, C, H, W])
+        s_feat = F.interpolate(s_feat, size=t_feat.shape[2:], mode='bilinear', align_corners=False)
+    return F.mse_loss(attention_map(s_feat), attention_map(t_feat))
+    # TODO: Buscar un metodo que pueda ser más representativo que MSE (DCT?)

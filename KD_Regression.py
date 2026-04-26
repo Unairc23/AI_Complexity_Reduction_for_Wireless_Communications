@@ -14,6 +14,7 @@ from matplotlib import pyplot as plt
 from torch.utils.data import random_split, Dataset
 import torch.nn.functional as F
 import random, numpy as np
+from sklearn.metrics.pairwise import cosine_similarity
 
 # Todo: Implementar / quitar modelos no compatibles con regresion
 from modelos import DeepNN, LightNN, LightNN_Adaptada, DeepNN_Adaptada, load_resnet, DnCNN, ResNetDenoiser, UNetDenoiser
@@ -38,13 +39,10 @@ MODEL_REGISTRY = {
         "Teacher": lambda: ResNetDenoiser(in_channels=2, base_channels=32)
     },
     "UNet": {
-        "Student": lambda: UNetDenoiser(in_channels=2, base_channels=8),
+        "Student": lambda: UNetDenoiser(in_channels=2, base_channels=3),
         "Teacher": lambda: UNetDenoiser(in_channels=2, base_channels=64)
     }
 }
-
-# ============================================== BSD500 Loader ========================================================
-# Todo: Eliminar / mover a otro lugar los metodos de las imagenes BSD500
 
 class NPYDataset(Dataset):
     def __init__(self, X, Y, transform=None):
@@ -219,45 +217,63 @@ def train_knowledge_distillation(teacher, student, train_loader, epochs, learnin
     return train_history, val_history
 
 def train_feature_based_kd(teacher, student, train_loader, epochs, learning_rate, alpha, device):
-    #Todo: - Implementar bottleneck para los casos en los que la arquitectura de teacher y student sea diferente.
-    # (KNOWLEDGE DISTILLATION FOR SPEECH DENOISING BY LATENT REPRESENTATION ALIGNMENT WITH COSINE DISTANCE)
+    #Todo: - Tratar de mejorar el bottleneck (warming)
     mse_loss = nn.MSELoss()
-    optimizer = optim.Adam(student.parameters(), lr=learning_rate)
-    early_stopper = EarlyStoppingLoss(patience=conf["KDR"]["patience"])
+    early_stopper = EarlyStoppingLoss(patience=conf["KDR"]["patience"]+8)
 
     teacher.to(device)
     student.to(device)
-    teacher.eval()  # Teacher set to evaluation mode
-    student.train() # Student to train mode
+    teacher.eval()
+    student.train()
+
+    with torch.no_grad():
+        dummy = next(iter(train_loader))[0][:1].to(device)
+        teacher(dummy)
+        t_ch = teacher_features["latent"].shape[1]
+        student(dummy)
+        s_ch = fkd_features["latent"].shape[1]
+    print(f"Teacher shape: {teacher_features["latent"].shape}")
+    print(f"Student shape: {fkd_features["latent"].shape}")
+
+    bottleneck_proj = nn.Conv2d(t_ch, s_ch, kernel_size=1, bias=False).to(device)
+    print(f"Linear bottleneck: {t_ch} → {s_ch} canales")
+
+    optimizer = optim.Adam([
+        {"params": student.parameters(), "lr": learning_rate},
+        {"params": bottleneck_proj.parameters(), "lr": learning_rate * 10}
+    ])
 
     train_history = []
     val_history = []
 
     for epoch in range(epochs):
+        student.train()
+        bottleneck_proj.train()
         running_loss = 0.0
         student_running_loss = 0.0
+
         for X, Y in train_loader:
             X, Y = X.to(device), Y.to(device)
             optimizer.zero_grad()
 
-            # Forward pass with the teacher model - do not save gradients here as we do not change the teacher's weights
             with torch.no_grad():
-                teacher_pred = teacher(X)
-                t_latent = teacher_features["latent"]
-                # t_latent = bottleneck(t_latent)
+                teacher(X)
+                t_latent = teacher_features["latent"].detach()
 
-            # Forward pass with the student model
             student_pred = student(X)
             s_latent = fkd_features["latent"]
 
-            if (conf["Data"]["Unica"]):
+            if conf["Data"]["Unica"]:
                 Y = Y[:, :, 64, :]
                 student_pred = student_pred[:, :, 64, :]
 
-            out_loss = mse_loss(student_pred, Y)
-            kd_loss = cosine_kd_loss(s_latent, t_latent)
+            t_latent_proj = bottleneck_proj(t_latent)
 
+            out_loss = mse_loss(student_pred, Y)
+            kd_loss = cosine_kd_loss(s_latent, t_latent_proj)
+            print(f"Loss: {out_loss:.8f} / KD_Loss: {kd_loss:.8f}")
             loss = out_loss + alpha * kd_loss
+
             loss.backward()
             optimizer.step()
 
@@ -269,20 +285,91 @@ def train_feature_based_kd(teacher, student, train_loader, epochs, learning_rate
 
         train_history.append(epoch_loss)
         val_history.append(val_loss)
-        print(f"Epoch {epoch + 1}/{epochs} | Loss: {epoch_loss:.8f} | Val_Loss: {val_loss:.8f}")
 
         if early_stopper.step(val_loss, student):
             print("Early stopping triggered!")
             break
 
     early_stopper.restore(student)
-
     return train_history, val_history
 
 def cosine_kd_loss(h_s, h_t):  # h_s, h_t: [B, C, H, W]
-    h_s = F.normalize(h_s.flatten(1), dim=1)
-    h_t = F.normalize(h_t.flatten(1), dim=1)
-    return 1 - (h_s * h_t).sum(dim=1).mean()
+    B, C_s, H, W = h_s.shape
+    _, C_t, _, _ = h_t.shape
+    print(C_t, C_s)
+
+    if (conf["KDR"]["features"] == "spatial"):
+        h_s = h_s.permute(0, 2, 3, 1).reshape(B * H * W, C_s)
+        h_t = h_t.permute(0, 2, 3, 1).reshape(B * H * W, C_t)
+    elif (conf["KDR"]["features"] == "channel"):
+        h_s = h_s.reshape(B, C_s, H*W)
+        h_t = h_t.reshape(B, C_t, H*W)
+    elif (conf["KDR"]["features"] == "global"):
+        h_s = h_s.reshape(B, C_s * H * W)
+        h_t = h_t.reshape(B, C_t * H * W)
+
+    return 1 - F.cosine_similarity(h_s, h_t, dim=-1).mean()
+
+# def cosine_kd_loss(h_s, h_t):
+#     return 1 - ((np.dot(h_s, h_t)) / (np.linalg.norm(h_s) * np.linalg.norm(h_t)))
+
+
+def train_attention_kd(teacher, student, t_feats, s_feats, train_loader, epochs, learning_rate, alpha, device):
+    mse_loss = nn.MSELoss()
+    optimizer = optim.Adam(student.parameters(), lr=learning_rate)
+    early_stopper = EarlyStoppingLoss(patience=conf["KDR"]["patience"])
+
+    teacher.to(device)
+    student.to(device)
+    teacher.eval()
+    student.train()
+
+    train_history = []
+    val_history = []
+
+    for epoch in range(epochs):
+        student_running_loss = 0.0
+        for X, Y in train_loader:
+            X, Y = X.to(device), Y.to(device)
+            optimizer.zero_grad()
+
+            with torch.no_grad():
+                teacher(X)
+                t_enc1 = t_feats["enc1"].detach()
+                t_enc2 = t_feats["enc2"].detach()
+                t_bottle = t_feats["bottleneck"].detach()
+
+            student_pred = student(X)
+            s_enc1 = s_feats["enc1"]
+            s_enc2 = s_feats["enc2"]
+            s_bottle = s_feats["bottleneck"]
+
+            out_loss = mse_loss(student_pred, Y)
+            at_loss = (
+                    attention_transfer_loss(s_enc1, t_enc1) +
+                    attention_transfer_loss(s_enc2, t_enc2) +
+                    attention_transfer_loss(s_bottle, t_bottle)
+            )
+            print(f"Loss: {out_loss:.8f} / ATLoss: {at_loss:.8f}") # AtLoss es dos ordenes de magnitud mas pequeño
+            loss = out_loss + alpha * at_loss
+
+            loss.backward()
+            optimizer.step()
+            student_running_loss += out_loss.item()
+
+        epoch_loss = student_running_loss / len(train_loader)
+        val_loss = evaluate(student, val_loader, device)
+        train_history.append(epoch_loss)
+        val_history.append(val_loss)
+        print(f"Epoch {epoch + 1}/{epochs} | Train_Loss: {epoch_loss:.8f} | Val_Loss: {val_loss:.8f}")
+
+        if early_stopper.step(val_loss, student):
+            print("Early stopping triggered!")
+            break
+
+    early_stopper.restore(student)
+    return train_history, val_history
+
 
 # ============================================== Early stopping ========================================================
 def evaluate(model, loader, device):
@@ -368,9 +455,10 @@ if __name__ == "__main__":
     student = MODEL_REGISTRY[sModel]["Student"]().to(device)
 
     teacher_features = {}
-    student_features = {}
+    teacher_attentions = {}
 
     register_hook(teacher, tModel, teacher_features, "latent", conf["KDR"]["Features"]["t_layers"])
+    register_hooks_at(teacher, teacher_attentions)
 
     if conf["KDR"]["train"]:
         if tModel != "resnet18": # Los modelos resnet usados ya están preentrenados con CIFAR10
@@ -453,40 +541,57 @@ if __name__ == "__main__":
         print(f"Diferencia Student: {mseSq - mseS:.8f} ({(mseSq - mseS)/mseS:.2f}%)")
 
     # ============================================== KD clasica ========================================================
-    print("================ Entrenando kd_student ================")
-    kd_student = MODEL_REGISTRY[sModel]["Student"]().to(device)
+    if (conf["KDR"]["KD"]):
+        print("================ Entrenando kd_student ================")
+        kd_student = MODEL_REGISTRY[sModel]["Student"]().to(device)
 
-    kd_hist = train_knowledge_distillation(teacher=teacher, student=kd_student, train_loader=train_loader,
-                                 epochs=conf["KDR"]["sEpoch"], learning_rate=conf["KDR"]["lr"], device=device,
-                                 teacher_threshold=0.001, alpha=conf["KDR"]["alpha"])
+        kd_hist = train_knowledge_distillation(teacher=teacher, student=kd_student, train_loader=train_loader,
+                                     epochs=conf["KDR"]["sEpoch"], learning_rate=conf["KDR"]["lr"], device=device,
+                                     teacher_threshold=0.001, alpha=conf["KDR"]["alpha"])
 
-    # Comparacion entre teacher y modelo destilado
-    graficar(kd_student, test_ds, device, idx=idx, modelName="kd_student", modo="canales")
+        # Comparacion entre teacher y modelo destilado
+        graficar(kd_student, test_ds, device, idx=idx, modelName="kd_student", modo="canales")
 
     # =========================================== Feature based KD =====================================================
-    print("================ Entrenando feature_kd_student ================")
-    kd_student_feature = MODEL_REGISTRY[sModel]["Student"]().to(device)
+    if (conf["KDR"]["FKD"]):
+        print("================ Entrenando feature_kd_student ================")
+        kd_student_feature = MODEL_REGISTRY[sModel]["Student"]().to(device)
 
-    fkd_features = {}
-    register_hook(kd_student_feature, sModel, fkd_features, "latent", conf["KDR"]["Features"]["s_layers"])
+        fkd_features = {}
+        register_hook(kd_student_feature, sModel, fkd_features, "latent", conf["KDR"]["Features"]["s_layers"])
 
-    fkd_hist = train_feature_based_kd(teacher=teacher, student=kd_student_feature, train_loader=train_loader, epochs=conf["KDR"]["sEpoch"],
-                           learning_rate=conf["KDR"]["lr"], device=device, alpha=conf["KDR"]["alpha"])
+        fkd_hist = train_feature_based_kd(teacher=teacher, student=kd_student_feature, train_loader=train_loader, epochs=conf["KDR"]["sEpoch"],
+                               learning_rate=conf["KDR"]["lr"], device=device, alpha=conf["KDR"]["alpha"])
 
-    graficar(kd_student_feature, test_ds, device, idx=idx, modelName="kd_student_feature", modo="canales")
+        graficar(kd_student_feature, test_ds, device, idx=idx, modelName="kd_student_feature", modo="canales")
 
-    # Carga el historial del teacher / student solo si se han entrenado, si se han cargado no porque no están guardados en ningun lado
+    # =========================================== Attention based KD =====================================================
+    if (conf["KDR"]["AKD"]):
+        print("================ Entrenando attention_kd_student ================")
+        kd_student_attention = MODEL_REGISTRY[sModel]["Student"]().to(device)
+
+        akd_features = {}
+        register_hooks_at(kd_student_attention, akd_features)
+
+        akd_hist = train_attention_kd(teacher=teacher, student=kd_student_attention, t_feats=teacher_attentions,
+                                            s_feats=akd_features, train_loader=train_loader, epochs=conf["KDR"]["sEpoch"],
+                                            learning_rate=conf["KDR"]["lr"], device=device, alpha=conf["KDR"]["alpha"])
+
+        graficar(kd_student_attention, test_ds, device, idx=idx, modelName="kd_student_attention", modo="canales")
+
+    # Carga el historial del teacher / student solo si se han entrenado, si se han cargado no porque no están guardados en ningun lado por ahora
+    historial = {}
     if conf["KDR"]["train"]:
         historial = {
             "Teacher": teacher_hist,
-            "Student": student_hist,
-            "KD": kd_hist,
-            "FKD": fkd_hist
+            "Student": student_hist
         }
-    else:
-        historial = {
-            "KD": kd_hist,
-            "FKD": fkd_hist
-        }
+    if conf["KDR"]["KD"]:
+        historial["KD_Student"] = kd_hist
+    if conf["KDR"]["FKD"]:
+        historial["FKD_Student"] = fkd_hist
+    if conf["KDR"]["AKD"]:
+        historial["AKD_Student"] = akd_hist
+
     plot_training_curves(historial)
     guardar_training_curves(historial)
