@@ -5,25 +5,28 @@
     "Y": "data/Datos_Sinteticos/TDL_D_85ns_fd1000_SNR20_h_real128.npy",
     "sModel": "UNet",
     "tModel": "UNet",
-    "train": false,
-    "KD": false,
+    "t_train": true,
+    "s_train": true,
+    "KD": true,
     "FKD": true,
     "features": "spatial",
-    "AKD": false,
-    "cuantizar": false,
-    "tDepth": 17,
-    "tEpoch": 1000,
-    "sDepth": 2,
-    "sEpoch": 1000,
-    "plot_idx": 0,
-    "lr": 0.0001,
-    "batch_size": 32,
-    "alpha": 0.7,
-    "Features":
+    "f_layers":
     {
       "t_layers": -2,
       "s_layers": -2
     },
+    "AKD": true,
+    "cuantizar": false,
+    "plot_idx": 0,
+    "alpha": 0.7
+  },
+  "Model": {
+    "tDepth": 2,
+    "tEpoch": 1,
+    "sDepth": 2,
+    "sEpoch": 1,
+    "lr": 0.0001,
+    "batch_size": 16,
     "patience": 7
   },
   "Data": {

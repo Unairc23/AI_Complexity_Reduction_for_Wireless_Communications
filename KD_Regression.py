@@ -16,8 +16,7 @@ import torch.nn.functional as F
 import random, numpy as np
 from sklearn.metrics.pairwise import cosine_similarity
 
-# Todo: Implementar / quitar modelos no compatibles con regresion
-from modelos import DeepNN, LightNN, LightNN_Adaptada, DeepNN_Adaptada, load_resnet, DnCNN, ResNetDenoiser, UNetDenoiser
+from modelos import DnCNN, ResNetDenoiser, UNetDenoiser
 from utils import *
 from Cuantizacion import *
 
@@ -25,22 +24,17 @@ with open("config.json", "r", encoding="utf-8") as f:
     conf = json.load(f)
 
 MODEL_REGISTRY = {
-    "resnet18": lambda: load_resnet(),
-    "deep": lambda: DeepNN(num_classes=10),
-    "deep_adaptada": lambda: DeepNN_Adaptada(num_classes=10),
-    "light": lambda: LightNN(num_classes=10),
-    "light_adaptada": lambda: LightNN_Adaptada(num_classes=10),
     "DnCNN": {
         "Student": lambda: DnCNN(depth=conf["KDR"]["sDepth"]),
         "Teacher": lambda: DnCNN(depth=conf["KDR"]["tDepth"])
     },
     "resnet_denoiser": {
-        "Student": lambda: ResNetDenoiser(in_channels=2, base_channels=16),
-        "Teacher": lambda: ResNetDenoiser(in_channels=2, base_channels=32)
+        "Student": lambda: ResNetDenoiser(in_channels=2, base_channels=conf["Model"]["sDepth"]),
+        "Teacher": lambda: ResNetDenoiser(in_channels=2, base_channels=conf["Model"]["tDepth"])
     },
     "UNet": {
-        "Student": lambda: UNetDenoiser(in_channels=2, base_channels=3),
-        "Teacher": lambda: UNetDenoiser(in_channels=2, base_channels=64)
+        "Student": lambda: UNetDenoiser(in_channels=2, base_channels=conf["Model"]["sDepth"]),
+        "Teacher": lambda: UNetDenoiser(in_channels=2, base_channels=conf["Model"]["tDepth"])
     }
 }
 
@@ -83,7 +77,7 @@ if (contains(conf["KDR"]["X"], "bsd500")):
 
 X = np.load(conf["KDR"]["X"])
 Y = np.load(conf["KDR"]["Y"])
-batch_size = conf["KDR"]["batch_size"]
+batch_size = conf["Model"]["batch_size"]
 
 full_dataset = NPYDataset(X, Y)
 
@@ -105,7 +99,7 @@ test_loader = torch.utils.data.DataLoader(test_ds, batch_size=batch_size, shuffl
 def train(model, train_loader, epochs, learning_rate, device):
     criterion = nn.MSELoss()
     optimizer = optim.Adam(model.parameters(), lr=learning_rate)
-    early_stopper = EarlyStoppingLoss(patience=conf["KDR"]["patience"])
+    early_stopper = EarlyStoppingLoss(patience=conf["Model"]["patience"])
 
     train_history = []
     val_history = []
@@ -154,7 +148,7 @@ def train_knowledge_distillation(teacher, student, train_loader, epochs, learnin
     #Todo: Ahora mismo el teacher calcula el mse de todo el batch, no solo de la prediccion actual
     mse_loss = nn.MSELoss()
     optimizer = optim.Adam(student.parameters(), lr=learning_rate)
-    early_stopper = EarlyStoppingLoss(patience=conf["KDR"]["patience"])
+    early_stopper = EarlyStoppingLoss(patience=conf["Model"]["patience"])
 
     teacher.to(device)
     student.to(device)
@@ -219,21 +213,19 @@ def train_knowledge_distillation(teacher, student, train_loader, epochs, learnin
 def train_feature_based_kd(teacher, student, train_loader, epochs, learning_rate, alpha, device):
     #Todo: - Tratar de mejorar el bottleneck (warming)
     mse_loss = nn.MSELoss()
-    early_stopper = EarlyStoppingLoss(patience=conf["KDR"]["patience"]+8)
+    early_stopper = EarlyStoppingLoss(patience=conf["Model"]["patience"]+8)
 
     teacher.to(device)
     student.to(device)
     teacher.eval()
     student.train()
 
-    with torch.no_grad():
+    with torch.no_grad(): # Seguramente este pass para ver las dimensiones de los modelos se pueda hacer de otra manera
         dummy = next(iter(train_loader))[0][:1].to(device)
         teacher(dummy)
         t_ch = teacher_features["latent"].shape[1]
         student(dummy)
         s_ch = fkd_features["latent"].shape[1]
-    print(f"Teacher shape: {teacher_features["latent"].shape}")
-    print(f"Student shape: {fkd_features["latent"].shape}")
 
     bottleneck_proj = nn.Conv2d(t_ch, s_ch, kernel_size=1, bias=False).to(device)
     print(f"Linear bottleneck: {t_ch} → {s_ch} canales")
@@ -271,7 +263,6 @@ def train_feature_based_kd(teacher, student, train_loader, epochs, learning_rate
 
             out_loss = mse_loss(student_pred, Y)
             kd_loss = cosine_kd_loss(s_latent, t_latent_proj)
-            print(f"Loss: {out_loss:.8f} / KD_Loss: {kd_loss:.8f}")
             loss = out_loss + alpha * kd_loss
 
             loss.backward()
@@ -296,7 +287,6 @@ def train_feature_based_kd(teacher, student, train_loader, epochs, learning_rate
 def cosine_kd_loss(h_s, h_t):  # h_s, h_t: [B, C, H, W]
     B, C_s, H, W = h_s.shape
     _, C_t, _, _ = h_t.shape
-    print(C_t, C_s)
 
     if (conf["KDR"]["features"] == "spatial"):
         h_s = h_s.permute(0, 2, 3, 1).reshape(B * H * W, C_s)
@@ -317,7 +307,7 @@ def cosine_kd_loss(h_s, h_t):  # h_s, h_t: [B, C, H, W]
 def train_attention_kd(teacher, student, t_feats, s_feats, train_loader, epochs, learning_rate, alpha, device):
     mse_loss = nn.MSELoss()
     optimizer = optim.Adam(student.parameters(), lr=learning_rate)
-    early_stopper = EarlyStoppingLoss(patience=conf["KDR"]["patience"])
+    early_stopper = EarlyStoppingLoss(patience=conf["Model"]["patience"])
 
     teacher.to(device)
     student.to(device)
@@ -350,7 +340,7 @@ def train_attention_kd(teacher, student, t_feats, s_feats, train_loader, epochs,
                     attention_transfer_loss(s_enc2, t_enc2) +
                     attention_transfer_loss(s_bottle, t_bottle)
             )
-            print(f"Loss: {out_loss:.8f} / ATLoss: {at_loss:.8f}") # AtLoss es dos ordenes de magnitud mas pequeño
+            #print(f"Loss: {out_loss:.8f} / ATLoss: {at_loss:.8f}") # AtLoss es dos ordenes de magnitud mas pequeño
             loss = out_loss + alpha * at_loss
 
             loss.backward()
@@ -446,9 +436,9 @@ if __name__ == "__main__":
     torch.multiprocessing.freeze_support()
 
     tModel = conf["KDR"]["tModel"]
-    t_tamaño = conf["KDR"]["tDepth"]
+    t_tamaño = conf["Model"]["tDepth"]
     sModel = conf["KDR"]["sModel"]
-    s_tamaño = conf["KDR"]["sDepth"]
+    s_tamaño = conf["Model"]["sDepth"]
     snr = conf["Data"]["Snr_db"]
 
     teacher = MODEL_REGISTRY[tModel]["Teacher"]().to(device)
@@ -457,22 +447,23 @@ if __name__ == "__main__":
     teacher_features = {}
     teacher_attentions = {}
 
-    register_hook(teacher, tModel, teacher_features, "latent", conf["KDR"]["Features"]["t_layers"])
+    register_hook(teacher, tModel, teacher_features, "latent", conf["KDR"]["f_layers"]["t_layers"])
     register_hooks_at(teacher, teacher_attentions)
 
-    if conf["KDR"]["train"]:
-        if tModel != "resnet18": # Los modelos resnet usados ya están preentrenados con CIFAR10
-            print("================ Entrenando teacher ================")
-            teacher_hist = train(model=teacher, train_loader=train_loader, epochs=conf["KDR"]["tEpoch"], learning_rate=conf["KDR"]["lr"],
-                  device=device)
-        print("================ Entrenando no_KD_student ================")
-        student_hist = train(model=student, train_loader=train_loader, epochs=conf["KDR"]["sEpoch"], learning_rate=conf["KDR"]["lr"],
+    if conf["KDR"]["t_train"]:
+        print("\n================ Entrenando teacher ================")
+        teacher_hist = train(model=teacher, train_loader=train_loader, epochs=conf["Model"]["tEpoch"], learning_rate=conf["Model"]["lr"],
               device=device)
-
         torch.save(teacher.state_dict(), f"model/{tModel}_{t_tamaño}l_{snr}snr.pth")
-        torch.save(student.state_dict(), f"model/{sModel}_{s_tamaño}l_{snr}snr.pth")
     else:
         teacher = load_model(teacher, path=f"model/{tModel}_{t_tamaño}l_{snr}snr.pth", device=device)
+
+    if conf["KDR"]["s_train"]:
+        print("\n================ Entrenando no_KD_student ================")
+        student_hist = train(model=student, train_loader=train_loader, epochs=conf["Model"]["sEpoch"], learning_rate=conf["Model"]["lr"],
+              device=device)
+        torch.save(student.state_dict(), f"model/{sModel}_{s_tamaño}l_{snr}snr.pth")
+    else:
         student = load_model(student, path=f"model/{sModel}_{s_tamaño}l_{snr}snr.pth", device=device)
 
     # Comparar tamaño teacher / modelo sin destilar
@@ -508,7 +499,7 @@ if __name__ == "__main__":
     # ============================================== Cuantizar ========================================================
 
     if (conf["KDR"]["cuantizar"]):
-        print("============================ Cuantizando ============================")
+        print("\n============================ Cuantizando ============================")
 
         teacher_q = cuantizar_estatica(teacher, device, val_loader)
         student_q = cuantizar_estatica(student, device, val_loader)
@@ -542,11 +533,11 @@ if __name__ == "__main__":
 
     # ============================================== KD clasica ========================================================
     if (conf["KDR"]["KD"]):
-        print("================ Entrenando kd_student ================")
+        print("\n================ Entrenando kd_student ================")
         kd_student = MODEL_REGISTRY[sModel]["Student"]().to(device)
 
         kd_hist = train_knowledge_distillation(teacher=teacher, student=kd_student, train_loader=train_loader,
-                                     epochs=conf["KDR"]["sEpoch"], learning_rate=conf["KDR"]["lr"], device=device,
+                                     epochs=conf["Model"]["sEpoch"], learning_rate=conf["Model"]["lr"], device=device,
                                      teacher_threshold=0.001, alpha=conf["KDR"]["alpha"])
 
         # Comparacion entre teacher y modelo destilado
@@ -554,38 +545,37 @@ if __name__ == "__main__":
 
     # =========================================== Feature based KD =====================================================
     if (conf["KDR"]["FKD"]):
-        print("================ Entrenando feature_kd_student ================")
+        print("\n================ Entrenando feature_kd_student ================")
         kd_student_feature = MODEL_REGISTRY[sModel]["Student"]().to(device)
 
         fkd_features = {}
-        register_hook(kd_student_feature, sModel, fkd_features, "latent", conf["KDR"]["Features"]["s_layers"])
+        register_hook(kd_student_feature, sModel, fkd_features, "latent", conf["KDR"]["f_layers"]["s_layers"])
 
-        fkd_hist = train_feature_based_kd(teacher=teacher, student=kd_student_feature, train_loader=train_loader, epochs=conf["KDR"]["sEpoch"],
-                               learning_rate=conf["KDR"]["lr"], device=device, alpha=conf["KDR"]["alpha"])
+        fkd_hist = train_feature_based_kd(teacher=teacher, student=kd_student_feature, train_loader=train_loader, epochs=conf["Model"]["sEpoch"],
+                               learning_rate=conf["Model"]["lr"], device=device, alpha=conf["KDR"]["alpha"])
 
         graficar(kd_student_feature, test_ds, device, idx=idx, modelName="kd_student_feature", modo="canales")
 
     # =========================================== Attention based KD =====================================================
     if (conf["KDR"]["AKD"]):
-        print("================ Entrenando attention_kd_student ================")
+        print("\n================ Entrenando attention_kd_student ================")
         kd_student_attention = MODEL_REGISTRY[sModel]["Student"]().to(device)
 
         akd_features = {}
         register_hooks_at(kd_student_attention, akd_features)
 
         akd_hist = train_attention_kd(teacher=teacher, student=kd_student_attention, t_feats=teacher_attentions,
-                                            s_feats=akd_features, train_loader=train_loader, epochs=conf["KDR"]["sEpoch"],
-                                            learning_rate=conf["KDR"]["lr"], device=device, alpha=conf["KDR"]["alpha"])
+                                            s_feats=akd_features, train_loader=train_loader, epochs=conf["Model"]["sEpoch"],
+                                            learning_rate=conf["Model"]["lr"], device=device, alpha=conf["KDR"]["alpha"])
 
         graficar(kd_student_attention, test_ds, device, idx=idx, modelName="kd_student_attention", modo="canales")
 
     # Carga el historial del teacher / student solo si se han entrenado, si se han cargado no porque no están guardados en ningun lado por ahora
     historial = {}
-    if conf["KDR"]["train"]:
-        historial = {
-            "Teacher": teacher_hist,
-            "Student": student_hist
-        }
+    if conf["KDR"]["t_train"]:
+        historial["Teacher"] = teacher_hist
+    if conf["KDR"]["s_train"]:
+        historial["Student"] = student_hist
     if conf["KDR"]["KD"]:
         historial["KD_Student"] = kd_hist
     if conf["KDR"]["FKD"]:
