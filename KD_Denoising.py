@@ -12,9 +12,6 @@ from train_models import train_basic, train_akd, train_kd, train_fkd, run_with_k
 with open("config.json", "r", encoding="utf-8") as f:
     conf = json.load(f)
 
-with open("config_wandb.json", "r", encoding="utf-8") as f:
-    conf_wandb = json.load(f)
-
 MODEL_REGISTRY = {
     "DnCNN": {
         "Student": lambda: DnCNN(depth=conf["Model"]["sDepth"]),
@@ -298,6 +295,9 @@ if __name__ == "__main__":
 
 # =============================================== COSAS WANDB ==========================================================
     if (conf["KDR"]["wandb"]):
+        with open("config_wandb.json", "r", encoding="utf-8") as f:
+            conf_wandb = json.load(f)
+
         sweep_config = conf_wandb
         sweep_id = wandb.sweep(sweep_config, project="Basic_KD")
         wandb.agent(sweep_id, lambda:train_kd_wandb(teacher))
