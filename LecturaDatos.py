@@ -4,8 +4,9 @@ import h5py
 from pathlib import Path
 from matplotlib import pyplot as plt
 from sklearn.model_selection import train_test_split, KFold
+from sympy import false
 
-with open("../AI-for-Wireless-Communications/Low Complexity/config.json", "r", encoding="utf-8") as f:
+with open("config.json", "r", encoding="utf-8") as f:
     conf = json.load(f)
 
 def preparar_directorios_folds():
@@ -174,7 +175,7 @@ def plot_2d(imagenes, imagenes_ruido, idx=0):
     plt.show()
 
 def crear_imagenes_sint():
-    dset = conf["Data"]["Y"]
+    dset = conf["KDR"]["Y"]
     dset_ruido = conf["KDR"]["X"]
 
     imagenes = np.load(dset)
@@ -258,7 +259,6 @@ def crear_imagenes_sint():
 def crear_imagenes():
     dset = conf["Data"]["Dset"]
     snr_db = conf["Data"]["Snr_db"]
-    folds = None
 
     print("============== Cargando dataset individual ==============")
     data = cargarDatosNist(dset)
@@ -284,19 +284,19 @@ def crear_imagenes():
     plot_señales(imgs_train, imgs_ruido_train, 0)
     plot_2d(imgs_train, imgs_ruido_train, 0)
 
-    np.save(f'data/NIST_{dset}_imgsTrain.npy', imgs_train)
-    print(f"Imagenes guardadas en data/NIST_{dset}_imgsTrain.npy")
-    np.save(f'data/NIST_{dset}_imgsTest.npy', imgs_test)
-    print(f"Imagenes guardadas en data/NIST_{dset}_imgsTest.npy")
-    np.save(f'data/NIST_{dset}_imgsVal.npy', imgs_val)
-    print(f"Imagenes guardadas en data/NIST_{dset}_imgsVal.npy")
+    np.save(f'data/NIST_{dset}_Train.npy', imgs_train)
+    print(f"Imagenes guardadas en data/NIST_{dset}_Train.npy")
+    np.save(f'data/NIST_{dset}_Test.npy', imgs_test)
+    print(f"Imagenes guardadas en data/NIST_{dset}_Test.npy")
+    np.save(f'data/NIST_{dset}_Val.npy', imgs_val)
+    print(f"Imagenes guardadas en data/NIST_{dset}_Val.npy")
 
     np.save(f'data/NIST_{dset}_snr_{snr_medio}_Train.npy', imgs_ruido_train)
     print(f"Imagenes con SNR {snr_medio} guardadas en data/NIST_{dset}_snr_{snr_medio}_Train.npy")
     np.save(f'data/NIST_{dset}_snr_{snr_medio}_Test.npy', imgs_ruido_test)
     print(f"Imagenes con SNR {snr_medio} guardadas en data/NIST_{dset}_snr_{snr_medio}_Test.npy")
-    np.save(f'data/NIST_{dset}_imgsVal_snr_{snr_medio}.npy', imgs_ruido_val)
-    print(f"Imagenes con SNR {snr_medio} guardadas en data/NIST_{dset}_imgsVal_snr_{snr_medio}.npy")
+    np.save(f'data/NIST_{dset}_snr_{snr_medio}_Val.npy', imgs_ruido_val)
+    print(f"Imagenes con SNR {snr_medio} guardadas en data/NIST_{dset}snr_{snr_medio}_Val.npy")
 
     if (conf["Data"]["Kfold"]):
         folds = KFold(n_splits=5, shuffle=True, random_state=42)

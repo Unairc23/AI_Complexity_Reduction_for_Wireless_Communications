@@ -80,9 +80,11 @@ test_loader = torch.utils.data.DataLoader(test_ds, batch_size=batch_size, shuffl
 
 def cargar_fold(i, batch=16):
     dset = conf["KDR"]["Y"]
+    dset_ruido = conf["KDR"]["X"]
     dset_name = Path(dset).stem
-    X_train = np.load(f"data/folds/est/{dset_name}_{i}_Train.npy")
-    X_val = np.load(f"data/folds/est/{dset_name}_{i}_Val.npy")
+    dset_ruido_name = Path(dset_ruido).stem
+    X_train = np.load(f"data/folds/est/{dset_ruido_name}_{i}_Train.npy")
+    X_val = np.load(f"data/folds/est/{dset_ruido_name}_{i}_Val.npy")
     Y_train = np.load(f"data/folds/real/{dset_name}_{i}_Train.npy")
     Y_val = np.load(f"data/folds/real/{dset_name}_{i}_Val.npy")
 
@@ -133,6 +135,12 @@ if __name__ == "__main__":
     snr = conf["Data"]["Snr_db"]
     snr_med = np.median(snr).astype(int)
     print(snr_med)
+
+    teacher_hist = None
+    student_hist = None
+    kd_hist = None
+    fkd_hist = None
+    akd_hist = None
 
     teacher = MODEL_REGISTRY[tModel]["Teacher"]().to(device)
     student = MODEL_REGISTRY[sModel]["Student"]().to(device)
@@ -279,15 +287,15 @@ if __name__ == "__main__":
         graficar(kd_student_attention, test_ds, device, idx=idx, modelName="kd_student_attention", modo="canales")
 
     historial = {}
-    if teacher_hist:
+    if teacher_hist is not None:
         historial["Teacher"] = teacher_hist
-    if student_hist:
+    if student_hist is not None:
         historial["Student"] = student_hist
-    if kd_hist:
+    if kd_hist is not None:
         historial["KD_Student"] = kd_hist
-    if fkd_hist:
+    if fkd_hist is not None:
         historial["FKD_Student"] = fkd_hist
-    if akd_hist:
+    if akd_hist is not None:
         historial["AKD_Student"] = akd_hist
     if len(historial) > 0:
         plot_training_curves(historial)
@@ -299,5 +307,5 @@ if __name__ == "__main__":
             conf_wandb = json.load(f)
 
         sweep_config = conf_wandb
-        sweep_id = wandb.sweep(sweep_config, project="Basic_KD")
+        sweep_id = wandb.sweep(sweep_config, project="Denoising_Feature_KD_1.3")
         wandb.agent(sweep_id, lambda:train_kd_wandb(teacher))

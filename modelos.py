@@ -1,8 +1,6 @@
 import torch
 import timm
 import torch.nn as nn
-import torch.optim as optim
-from torchvision.models.resnet import BasicBlock
 
 def load_resnet():
     model = timm.create_model("resnet18", pretrained=False)
@@ -21,7 +19,6 @@ def load_resnet():
     )
     return model
 
-# Lightweight neural network class to be used as student:
 class LightNN(nn.Module):
     def __init__(self, num_classes=10):
         super(LightNN, self).__init__()
@@ -46,8 +43,7 @@ class LightNN(nn.Module):
         x = self.classifier(x)
         return x
 
-
-# Student de mayor tamaño siguiendo especificaciones de un paper
+# Student de mayor tamaño siguiendo especificaciones del paper
 class LightNN_Adaptada(nn.Module):
     def __init__(self, num_classes=10):
         super(LightNN_Adaptada, self).__init__()
@@ -85,7 +81,6 @@ class LightNN_Adaptada(nn.Module):
         x = self.classifier(x)
         return x
 
-# Deeper neural network class to be used as teacher:
 class DeepNN(nn.Module):
     def __init__(self, num_classes=10):
         super(DeepNN, self).__init__()
@@ -147,9 +142,6 @@ class DeepNN_Adaptada(nn.Module):
         self.features = nn.Sequential(
             nn.Conv2d(3, 64, kernel_size=3, padding=1),
             nn.ReLU(inplace=True),
-            # En teoria en todos estos ReLU puedes usar inplace=True, lo que hace que los valores nuevos sobrescriban
-            # los anteriores, lo cual reduce la memoria necesaria. Esto puede crear problemas, pero al ser una red
-            # simple como esta no deberia de haber problemas
             nn.MaxPool2d(2, 2),
 
             nn.Conv2d(64, 128, kernel_size=3, padding=1),
@@ -167,7 +159,7 @@ class DeepNN_Adaptada(nn.Module):
             nn.ReLU(inplace=True),
         )
 
-        # Se adapta el tamaño a 7x7 (explicar)
+        # Se adapta el tamaño a 7x7
         self.adaptive_pool = nn.AdaptiveAvgPool2d((7, 7))  # out: 64 x 7 x 7
 
         # Clasificador totalmente conectado: fc3136 -> fc1200 -> fc800
@@ -191,8 +183,6 @@ class DeepNN_Adaptada(nn.Module):
         x = self.classifier(x)
         return x
 
-# https://github.com/opendenoising/opendenoising-benchmark/tree/master
-# No se yo como ira este modelo con ATKD, porque no tiene jerarquia encoder/bottleneck/decoder
 class DnCNN(nn.Module):
     def __init__(self, depth=5, n_filters=64, kernel_size=3, n_channels=2):
         super(DnCNN, self).__init__()
@@ -210,49 +200,6 @@ class DnCNN(nn.Module):
     def forward(self, x):
         out = self.dncnn(x)
         return x - out
-
-
-class ResNetDenoiser(nn.Module):
-    def __init__(self, in_channels=1, base_channels=64, layers=[2,2,2,2]):
-        super().__init__()
-
-        # ===== Encoder =====
-        self.conv1 = nn.Conv2d(in_channels, base_channels, kernel_size=3, padding=1, bias=False)
-        self.bn1 = nn.BatchNorm2d(base_channels)
-        self.relu = nn.ReLU(inplace=True)
-
-        self.layer1 = self._make_layer(base_channels, base_channels, layers[0])
-        self.layer2 = self._make_layer(base_channels, base_channels, layers[1])
-        self.layer3 = self._make_layer(base_channels, base_channels, layers[2])
-        self.layer4 = self._make_layer(base_channels, base_channels, layers[3])
-
-        # ===== Decoder =====
-        self.decoder = nn.Sequential(
-            nn.Conv2d(base_channels, base_channels, 3, padding=1),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(base_channels, in_channels, 3, padding=1)
-        )
-
-    def _make_layer(self, inplanes, planes, blocks):
-        layers = []
-        for _ in range(blocks):
-            layers.append(BasicBlock(inplanes, planes))
-        return nn.Sequential(*layers)
-
-    def forward(self, x):
-        identity = x
-
-        x = self.relu(self.bn1(self.conv1(x)))
-
-        x = self.layer1(x)
-        x = self.layer2(x)
-        x = self.layer3(x)
-        x = self.layer4(x)
-
-        x = self.decoder(x)
-
-        # Residual learning (como DnCNN)
-        return identity - x
 
 class UNetBlock(nn.Module):
 

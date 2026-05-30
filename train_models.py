@@ -117,7 +117,7 @@ def train_kd(teacher, student, train_loader, val_loader, epochs, learning_rate, 
 
     return train_history, val_history
 
-def train_fkd(teacher, student, t_features, s_features, train_loader, val_loader, epochs, learning_rate, alpha, device, patience):
+def train_fkd(teacher, student, t_features, s_features, train_loader, val_loader, epochs, learning_rate, alpha, beta, device, patience):
 
     mse_loss = nn.MSELoss()
     early_stopper = EarlyStoppingLoss(patience=patience + 8)
@@ -195,7 +195,7 @@ def train_fkd(teacher, student, t_features, s_features, train_loader, val_loader
             optimizer.zero_grad()
 
             with torch.no_grad():
-                teacher(X)
+                teacher_pred = teacher(X)
                 t_latent = t_features["latent"].detach()
 
             student_pred = student(X)
@@ -205,15 +205,17 @@ def train_fkd(teacher, student, t_features, s_features, train_loader, val_loader
                 Y = Y[:, :, 64, :]
                 student_pred = student_pred[:, :, 64, :]
 
+            student_y_loss = mse_loss(student_pred, Y)
+            kd_loss = mse_loss(student_pred, teacher_pred)
+
             t_latent_proj = bottleneck_proj(t_latent)
-            out_loss = mse_loss(student_pred, Y)
-            kd_loss = cosine_kd_loss(s_latent, t_latent_proj)
-            loss = out_loss + alpha * kd_loss
+            feature_loss = cosine_kd_loss(s_latent, t_latent_proj)
+            loss = (1.0-alpha) * student_y_loss + alpha * kd_loss + beta * feature_loss
 
             loss.backward()
             optimizer.step()
 
-            student_running_loss += out_loss.item()
+            student_running_loss += student_y_loss.item()
             running_loss += loss.item()
 
         epoch_loss = student_running_loss / len(train_loader)
@@ -371,7 +373,7 @@ def run_with_kfold(train_fn, model_fn, load_fold_fn, device, batch, **kwargs,):
         if("t_features" in kwargs):
             s_features = {}
             register_hook(student, conf["KDR"]["sModel"], s_features, "latent", conf["KDR"]["f_layers"]["s_layers"])
-            kwargs["student_features"] = s_features
+            kwargs["s_features"] = s_features
         elif("t_attentons" in kwargs):
             s_attentons = {}
             register_hooks_at(student, s_attentons)
