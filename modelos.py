@@ -85,47 +85,21 @@ class DeepNN(nn.Module):
     def __init__(self, num_classes=10):
         super(DeepNN, self).__init__()
         self.features = nn.Sequential(
-            # Bloque 1
             nn.Conv2d(3, 128, kernel_size=3, padding=1),
-            nn.BatchNorm2d(128),
             nn.ReLU(),
-            nn.Conv2d(128, 128, kernel_size=3, padding=1),
-            nn.BatchNorm2d(128),
+            nn.Conv2d(128, 64, kernel_size=3, padding=1),
             nn.ReLU(),
             nn.MaxPool2d(kernel_size=2, stride=2),
-
-            # Bloque 2
-            nn.Conv2d(128, 256, kernel_size=3, padding=1),
-            nn.BatchNorm2d(256),
+            nn.Conv2d(64, 64, kernel_size=3, padding=1),
             nn.ReLU(),
-            nn.Conv2d(256, 256, kernel_size=3, padding=1),
-            nn.BatchNorm2d(256),
+            nn.Conv2d(64, 32, kernel_size=3, padding=1),
             nn.ReLU(),
             nn.MaxPool2d(kernel_size=2, stride=2),
-
-            # Bloque 3
-            nn.Conv2d(256, 512, kernel_size=3, padding=1),
-            nn.BatchNorm2d(512),
-            nn.ReLU(),
-            nn.Conv2d(512, 512, kernel_size=3, padding=1),
-            nn.BatchNorm2d(512),
-            nn.ReLU(),
-            nn.MaxPool2d(kernel_size=2, stride=2),
-
-            # Bloque 4
-            nn.Conv2d(512, 512, kernel_size=3, padding=1),
-            nn.BatchNorm2d(512),
-            nn.ReLU(),
         )
-
-        # Clasificador completamente conectado
         self.classifier = nn.Sequential(
-            nn.Linear(512 * 4 * 4, 1024),
+            nn.Linear(2048, 512),
             nn.ReLU(),
-            nn.Dropout(0.5),
-            nn.Linear(1024, 512),
-            nn.ReLU(),
-            nn.Dropout(0.3),
+            nn.Dropout(0.1),
             nn.Linear(512, num_classes)
         )
 

@@ -6,6 +6,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import wandb
+
+from Cuantizacion import cuantizar_estatica, cuantizar_qat, entrenar_qat
 from utils import attention_transfer_loss, register_hook, register_hooks_at, evaluate_psnr
 
 with open("config.json", "r", encoding="utf-8") as f:
@@ -30,10 +32,6 @@ def train_basic(model, train_loader, val_loader, epochs, learning_rate, device, 
 
             optimizer.zero_grad()
             outputs = model(X)
-
-            if (conf["Data"]["Unica"]):
-                Y = Y[:, :, 64, :]
-                outputs = outputs[:, :, 64, :]
 
             loss = criterion(outputs, Y)
             loss.backward()
@@ -81,11 +79,6 @@ def train_kd(teacher, student, train_loader, val_loader, epochs, learning_rate, 
                 teacher_pred = teacher(X)
             student_pred = student(X)
 
-            if (conf["Data"]["Unica"]):
-                Y = Y[:, :, 64, :]
-                teacher_pred = teacher_pred[:, :, 64, :]
-                student_pred = student_pred[:, :, 64, :]
-
             student_y_loss = mse_loss(student_pred, Y)
             teacher_student_loss = mse_loss(student_pred, teacher_pred)
             loss = alpha * teacher_student_loss + (1.0 - alpha) * student_y_loss
@@ -106,7 +99,7 @@ def train_kd(teacher, student, train_loader, val_loader, epochs, learning_rate, 
         if(conf["KDR"]["wandb"]):
             wandb.log({
                 "epoch": epoch + 1,
-                "mse": epoch_loss
+                "mse": val_loss
             })
 
         if early_stopper.step(val_loss, student):
@@ -200,11 +193,6 @@ def train_fkd(teacher, student, t_features, s_features, train_loader, val_loader
 
             student_pred = student(X)
             s_latent = s_features["latent"]
-
-            if conf["Data"]["Unica"]:
-                Y = Y[:, :, 64, :]
-                student_pred = student_pred[:, :, 64, :]
-
             student_y_loss = mse_loss(student_pred, Y)
             kd_loss = mse_loss(student_pred, teacher_pred)
 
@@ -227,7 +215,7 @@ def train_fkd(teacher, student, t_features, s_features, train_loader, val_loader
         if (conf["KDR"]["wandb"]):
             wandb.log({
                 "epoch": epoch + 1,
-                "mse": epoch_loss
+                "mse": val_loss
             })
 
         if early_stopper.step(val_loss, student):
@@ -238,7 +226,7 @@ def train_fkd(teacher, student, t_features, s_features, train_loader, val_loader
     return train_history, val_history
 
 
-def train_akd(teacher, student, t_attentions, s_attentions, train_loader, val_loader, epochs, learning_rate, alpha, device, patience):
+def train_akd(teacher, student, t_attentions, s_attentions, train_loader, val_loader, epochs, learning_rate, alpha, device, patience, beta):
     mse_loss = nn.MSELoss()
     optimizer = optim.Adam(student.parameters(), lr=learning_rate)
     early_stopper = EarlyStoppingLoss(patience=patience)
@@ -258,7 +246,7 @@ def train_akd(teacher, student, t_attentions, s_attentions, train_loader, val_lo
             optimizer.zero_grad()
 
             with torch.no_grad():
-                teacher(X)
+                teacher_pred = teacher(X)
                 t_enc1 = t_attentions["enc1"].detach()
                 t_enc2 = t_attentions["enc2"].detach()
                 t_bottle = t_attentions["bottleneck"].detach()
@@ -275,7 +263,8 @@ def train_akd(teacher, student, t_attentions, s_attentions, train_loader, val_lo
                     attention_transfer_loss(s_bottle, t_bottle)
             )
             #print(f"Loss: {out_loss:.8f} / ATLoss: {at_loss:.8f}") # AtLoss es dos ordenes de magnitud mas pequeño
-            loss = out_loss + alpha * at_loss
+            kd_loss = mse_loss(student_pred, teacher_pred)
+            loss = (1.0-alpha) * out_loss + alpha * kd_loss + beta * at_loss
 
             loss.backward()
             optimizer.step()
@@ -290,7 +279,7 @@ def train_akd(teacher, student, t_attentions, s_attentions, train_loader, val_lo
         if (conf["KDR"]["wandb"]):
             wandb.log({
                 "epoch": epoch + 1,
-                "mse": epoch_loss
+                "mse": val_loss
             })
 
         if early_stopper.step(val_loss, student):
@@ -305,15 +294,8 @@ def cosine_kd_loss(h_s, h_t):  # h_s, h_t: [B, C, H, W]
     B, C_s, H, W = h_s.shape
     _, C_t, _, _ = h_t.shape
 
-    if (conf["KDR"]["features"] == "spatial"):
-        h_s = h_s.permute(0, 2, 3, 1).reshape(B * H * W, C_s)
-        h_t = h_t.permute(0, 2, 3, 1).reshape(B * H * W, C_t)
-    elif (conf["KDR"]["features"] == "channel"):
-        h_s = h_s.reshape(B, C_s, H*W)
-        h_t = h_t.reshape(B, C_t, H*W)
-    elif (conf["KDR"]["features"] == "global"):
-        h_s = h_s.reshape(B, C_s * H * W)
-        h_t = h_t.reshape(B, C_t * H * W)
+    h_s = h_s.reshape(B, C_s, H*W)
+    h_t = h_t.reshape(B, C_t, H*W)
 
     return 1 - F.cosine_similarity(h_s, h_t, dim=-1).mean()
 
@@ -328,11 +310,6 @@ def evaluate(model, loader, device):
         for X, Y in loader:
             X, Y = X.to(device), Y.to(device)
             pred = model(X)
-
-            if (conf["Data"]["Unica"]):
-                Y = Y[:, :, 64, :]
-                pred = pred[:, :, 64, :]
-
             total_loss += mse(pred, Y).item()
 
     return total_loss / len(loader)
@@ -363,29 +340,62 @@ class EarlyStoppingLoss:
 
 def run_with_kfold(train_fn, model_fn, load_fold_fn, device, batch, **kwargs,):
     n_folds = conf["Data"].get("n_folds", 4)
+    # quant = kwargs["cuant"]
+    # kwargs.pop("cuant", None)
     fold_mses = []
     fold_psnrs = []
+    model = None
 
-    for i in range(n_folds):
+    for i in range(0, n_folds):
+        device_fold = device
+        kwargs_fold = dict(kwargs)
         print(f"\n Fold {i+1}/{n_folds}")
-        student = model_fn().to(device)
+        student = model_fn().to(device_fold)
         train_loader, val_loader = load_fold_fn(i, batch)
 
-        if("t_features" in kwargs):
+        if("t_features" in kwargs_fold):
             s_features = {}
-            register_hook(student, conf["KDR"]["sModel"], s_features, "latent", conf["KDR"]["f_layers"]["s_layers"])
-            kwargs["s_features"] = s_features
-        elif("t_attentons" in kwargs):
-            s_attentons = {}
-            register_hooks_at(student, s_attentons)
-            kwargs["s_attentons"] = s_attentons
+            register_hook(student, conf["KDR"]["sModel"], s_features, "latent")
+            kwargs_fold["s_features"] = s_features
+        elif("t_attentions" in kwargs_fold):
+            s_attentions = {}
+            register_hooks_at(student, s_attentions)
+            kwargs_fold["s_attentions"] = s_attentions
 
-        _, val_hist = train_fn(
-            train_loader=train_loader, val_loader=val_loader, device=device, student=student, **kwargs
-        )
+        # if(quant == "pre") or (quant == "both"):
+        #     student = entrenar_qat(student, device_fold, val_loader)
+
+        if("teacher" in kwargs_fold):
+            _, val_hist = train_fn(
+                train_loader=train_loader, val_loader=val_loader, device=device_fold, student=student, **kwargs_fold
+            )
+        else:
+            _, val_hist = train_fn(
+                train_loader=train_loader, val_loader=val_loader, device=device_fold, model=student, **kwargs_fold
+            )
+
+        # if(quant == "post"):
+        #     device_fold = torch.device("cpu")
+        #     student = student.to(device_fold)
+        #     student = cuantizar_estatica(student, device_fold, val_loader)
+        #     fold_mse = evaluate(student, val_loader, device_fold)
+        # elif (quant == "pre") or (quant == "both"):
+        #     device_fold = torch.device("cpu")
+        #     student = student.to(device_fold)
+        #     if (quant == "both"): # Fine tunning usando teacher cuantizado
+        #         teacherq = kwargs_fold["teacher"].to(device_fold)
+        #         teacherq = cuantizar_estatica(teacherq, device_fold, val_loader)
+        #         kwargs_fold["teacher"] = teacherq
+        #         kwargs_fold["epochs"] = 10
+        #         train_fn( train_loader=train_loader, val_loader=val_loader, device=device_fold, student=student, **kwargs_fold)
+        #     student = cuantizar_qat(student)
+        #     fold_mse = evaluate(student, val_loader, device_fold)
+        # else:
         fold_mse = val_hist[-1]
+
+        model = student # Devuelve el modelo unicamente para analizar luego su peso
         fold_mses.append(fold_mse)
-        fold_psnr = evaluate_psnr(student, val_loader, device)
+        fold_psnr = evaluate_psnr(student, val_loader, device_fold)
         fold_psnrs.append(fold_psnr)
         print(f"Fold {i+1} | MSE: {fold_mse:.6f} | PSNR: {fold_psnr:.6f}")
 
@@ -396,9 +406,9 @@ def run_with_kfold(train_fn, model_fn, load_fold_fn, device, batch, **kwargs,):
     mse_std  = statistics.stdev(fold_mses) if n_folds > 1 else 0.0
     psnr_mean = statistics.mean(fold_psnrs)
     psnr_std = statistics.stdev(fold_psnrs) if n_folds > 1 else 0.0
-    print(f"\nK-Fold → Mean: {mse_mean:.6f} | Std: {mse_std:.6f} | PSNR: {psnr_mean:.6f} | PSNR Std: {psnr_std:.6f}")
+    print(f"\nK-Fold: Mean: {mse_mean:.6f} | Std: {mse_std:.6f} | PSNR: {psnr_mean:.6f} | PSNR Std: {psnr_std:.6f}")
 
     if conf["KDR"].get("wandb"):
         wandb.log({"mse_mean": mse_mean, "mse_std": mse_std, "psnr_mean": psnr_mean, "psnr_std": psnr_std})
 
-    return mse_mean, mse_std, psnr_mean, psnr_std
+    return mse_mean, mse_std, psnr_mean, psnr_std, model

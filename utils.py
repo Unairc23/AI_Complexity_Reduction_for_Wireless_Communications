@@ -193,11 +193,11 @@ def graficar_attention_maps(model, dataset, device, idx=0, modelName="modelo"):
 
 # ================================================== FB/AT KD ==========================================================
 
-def register_hook(model, model_name, container, name, layers=-2):
+def register_hook(model, model_name, container, name):
     if model_name == "DnCNN":
-        layer = model.dncnn[layers]
+        layer = model.dncnn[-2]
         print(layer)
-    elif model_name == "UNet":
+    if model_name == "UNet":
         layer = model.bottleneck
     else:
         raise ValueError(f"Modelo {model_name} no soporta feature hooks")
