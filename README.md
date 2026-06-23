@@ -35,10 +35,14 @@ El repositorio está organizado en dos etapas, que se ejecutan en el siguiente o
 pip install -r requirements.txt
 ```
 
-> Nota: si vas a usar GPU, asegúrate de instalar una versión de `torch` compatible con tu CUDA.
+> **Nota:** si vas a usar GPU, instala antes una versión de `torch` compatible con CUDA, antes de ejecutar `pip install -r requirements.txt`. Este proyecto ha usado:
+>
+> ```powershell
+> pip3 install torch torchvision --index-url https://download.pytorch.org/whl/cu126
+> ```
 
-## 5. Cómo usar el código
-### A. Denoising principal
+## 4. Cómo usar el código
+### A. Knowledge Distillation para denoising 
 
 `KD_Denoising.py` es el script principal del proyecto. Lee toda su configuración desde `config.json` (no usa argumentos de línea de comandos) y hace lo siguiente:
 
@@ -93,9 +97,9 @@ Esto genera visualizaciones del dataset y, en el flujo actual.
 
 ---
 
-## 6. Configuraciones disponibles
+## 5. Configuraciones disponibles
 
-### 6.1 `config.json`
+### 5.1 `config.json`
 
 | Sección | Clave | Valor actual | Descripción corta |
 |---|---:|---:|---|
@@ -127,7 +131,7 @@ Esto genera visualizaciones del dataset y, en el flujo actual.
 | `Data` | `Snr_db` | `[10, 13, 15, 17, 20, 22, 25]` | Lista de SNRs de entrada. |
 | `Data` | `Kfold` | `false` | Activa validación cruzada. |
 
-### 6.2 `config_wandb.json`
+### 5.2 `config_wandb.json`
 
 | Clave | Valor actual | Descripción corta |
 |---|---|---|
@@ -143,7 +147,7 @@ Esto genera visualizaciones del dataset y, en el flujo actual.
 
 ---
 
-## 7. Salidas generadas
+## 6. Salidas generadas
 
 Durante la ejecución se generan los siguientes archivos:
 
