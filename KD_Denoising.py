@@ -165,14 +165,12 @@ if __name__ == "__main__":
                                        epochs=conf["Model"]["tEpoch"], learning_rate=conf["Model"]["lr"],
                                        device=device, patience=conf["Model"]["patience"])
             torch.save(teacher.state_dict(), f"model/{tModel}_{t_tamaño}l_{snr_med}snr.pth")
-            with open(f"{results_dir}/hist_teacher.json", "w") as f:
-                json.dump(teacher_hist, f)
+            guardar_json(teacher_hist, f"{results_dir}/hist_teacher.json")
         else:
             results, _ = run_with_kfold(train_fn=train_basic, model_fn=MODEL_REGISTRY[sModel]["Teacher"], load_fold_fn=cargar_fold,
                            device=device, batch=batch_size,learning_rate=conf["Model"]["lr"],
                            patience=conf["Model"]["patience"], epochs=conf["Model"]["sEpoch"], cuant="none")
-            with open(f"{results_dir}/kfold_teacher.json", "w") as f:
-                json.dump(results, f)
+            guardar_json(results, f"{results_dir}/kfold_teacher.json")
     else:
         teacher = load_model(teacher, path=f"model/{tModel}_{t_tamaño}l_{snr_med}snr.pth", device=device)
 
@@ -183,14 +181,12 @@ if __name__ == "__main__":
                                  epochs=conf["Model"]["sEpoch"], learning_rate=conf["Model"]["lr"],
                                  device=device, patience=conf["Model"]["patience"])
             torch.save(student.state_dict(), f"model/{sModel}_{s_tamaño}l_{snr_med}snr.pth")
-            with open(f"{results_dir}/hist_baseline.json", "w") as f:
-                json.dump(student_hist, f)
+            guardar_json(student_hist, f"{results_dir}/hist_baseline.json")
         else:
             results, _ = run_with_kfold(train_fn=train_basic, model_fn=MODEL_REGISTRY[sModel]["Student"], load_fold_fn=cargar_fold,
                            device=device, batch=batch_size, learning_rate=conf["Model"]["lr"],
                            patience=conf["Model"]["patience"], epochs=conf["Model"]["sEpoch"], cuant="none")
-            with open(f"{results_dir}/kfold_baseline.json", "w") as f:
-                json.dump(results, f)
+            guardar_json(results, f"{results_dir}/kfold_baseline.json")
     else:
         student = load_model(student, path=f"model/{sModel}_{s_tamaño}l_{snr_med}snr.pth", device=device)
 
@@ -281,9 +277,7 @@ if __name__ == "__main__":
             "Params": student_params
         }
     }
-
-    with open(f"{results_dir}/baseline_results.json", "w") as f:
-        json.dump(results_baseline, f)
+    guardar_json(results_baseline, f"{results_dir}/baseline_results.json")
 
     # ============================================== KD clasica ========================================================
     if (conf["KDR"]["KD"]):
@@ -294,15 +288,13 @@ if __name__ == "__main__":
             kd_hist = train_kd(teacher=teacher, student=kd_student, train_loader=train_loader, val_loader=val_loader,
                                epochs=conf["Model"]["sEpoch"], learning_rate=conf["Model"]["lr"], device=device,
                                alpha=0.7755, patience=conf["Model"]["patience"])
-            with open(f"{results_dir}/hist_RKD.json", "w") as f:
-                json.dump(kd_hist, f)
+            guardar_json(kd_hist, f"{results_dir}/hist_RKD.json")
         else:
             results, _ = run_with_kfold(train_fn=train_kd, model_fn=MODEL_REGISTRY[sModel]["Student"], load_fold_fn=cargar_fold,
                            device=device, batch=batch_size, teacher=teacher, alpha=conf["KDR"]["alpha"],
                            patience=conf["Model"]["patience"], epochs=conf["Model"]["sEpoch"],
                            learning_rate=conf["Model"]["lr"])
-            with open(f"{results_dir}/kfold_RKD.json", "w") as f:
-                json.dump(results, f)
+            guardar_json(results, f"{results_dir}/kfold_RKD.json")
 
         # Comparacion entre teacher y modelo destilado
         torch.save(kd_student.state_dict(), f"model/kd_{sModel}_{s_tamaño}l_{snr_med}snr.pth")
@@ -322,15 +314,13 @@ if __name__ == "__main__":
                                  train_loader=train_loader, val_loader=val_loader, epochs=conf["Model"]["sEpoch"],
                                  learning_rate=conf["Model"]["lr"], device=device, alpha=0.6997,
                                  patience=conf["Model"]["patience"], beta=0.5227)
-            with open(f"{results_dir}/hist_FKD.json", "w") as f:
-                json.dump(fkd_hist, f)
+            guardar_json(fkd_hist, f"{results_dir}/hist_FKD.json")
         else:
             results, _ = run_with_kfold(train_fn=train_fkd, model_fn=MODEL_REGISTRY[sModel]["Student"], load_fold_fn=cargar_fold,
                            device=device, batch=batch_size, teacher=teacher, alpha=conf["KDR"]["alpha"],
                            patience=conf["Model"]["patience"], epochs=conf["Model"]["sEpoch"],
                            learning_rate=conf["Model"]["lr"], beta=conf["KDR"]["beta"], t_features=teacher_features)
-            with open(f"{results_dir}/kfold_FKD.json", "w") as f:
-                json.dump(results, f)
+            guardar_json(results, f"{results_dir}/hist_FKD.json")
 
         torch.save(kd_student_feature.state_dict(), f"model/fkd_{sModel}_{s_tamaño}l_{snr_med}snr.pth")
         graficar(kd_student_feature, test_ds, device, idx=idx, modelName="kd_student_feature", modo="canales")
@@ -349,30 +339,16 @@ if __name__ == "__main__":
                                  train_loader=train_loader, val_loader=val_loader, epochs=conf["Model"]["sEpoch"],
                                  learning_rate=conf["Model"]["lr"], device=device, alpha=conf["KDR"]["alpha"],
                                  patience=conf["Model"]["patience"], beta=conf["KDR"]["beta"])
-            with open(f"{results_dir}/hist_AKD.json", "w") as f:
-                json.dump(akd_hist, f)
+            guardar_json(akd_hist, f"{results_dir}/hist_AKD.json")
         else:
             results, _ = run_with_kfold(train_fn=train_akd, model_fn=MODEL_REGISTRY[sModel]["Student"], load_fold_fn=cargar_fold,
                            device=device, batch=batch_size, teacher=teacher, alpha=0.649,
                            patience=conf["Model"]["patience"], epochs=conf["Model"]["sEpoch"],
                            learning_rate=conf["Model"]["lr"], beta=0.6246, t_attentions=teacher_attentions)
-            with open(f"{results_dir}/kfold_AKD.json", "w") as f:
-                json.dump(results, f)
+            guardar_json(results, f"{results_dir}/hist_AKD.json")
 
         torch.save(kd_student_attention.state_dict(), f"model/akd_{sModel}_{s_tamaño}l_{snr_med}snr.pth")
         graficar(kd_student_attention, test_ds, device, idx=idx, modelName="kd_student_attention", modo="canales")
-
-    with open(f"{results_dir}/config.json", "w") as f:
-        json.dump(conf, f)
-
-# ========================================== HIPERPARÁMETROS WANDB =====================================================
-    if (conf["KDR"]["wandb"]):
-        with open("config_wandb.json", "r", encoding="utf-8") as f:
-            conf_wandb = json.load(f)
-
-        sweep_config = conf_wandb
-        sweep_id = wandb.sweep(sweep_config, project="Denoising_Sint_FKD_Final")
-        wandb.agent(sweep_id, lambda:train_kd_wandb(teacher))
 
 # ============================================== PRUEBAS CUANT =========================================================
 
@@ -427,11 +403,10 @@ if __name__ == "__main__":
                 "Size_MB": quantized_student,
             }
         }
-        with open(f"{results_dir}/baseline_cuant.json", "w") as f:
-            json.dump(cuant_baseline, f)
+        guardar_json(cuant_baseline, f"{results_dir}/baseline_cuant.json")
 
+        # Combinación KD + Cuantización
         cpu = torch.device("cpu")
-        # Quant post-kd
         resultados_cuant, model = run_with_kfold(train_fn=train_kd,
                                                  model_fn=MODEL_REGISTRY[sModel]["Student"],
                                                  load_fold_fn=cargar_fold,
@@ -450,6 +425,15 @@ if __name__ == "__main__":
 
         resultados_cuant["size"] = quantized_student
         resultados_cuant["mean_per_sampleT"] = mean_per_sampleT
+        guardar_json(resultados_cuant, f"{results_dir}/cuant_{conf["KDR"]["cuantizar"]}.json")
 
-        with open(f"{results_dir}/cuant_{conf["KDR"]["cuantizar"]}.json", "w") as f:
-            json.dump(resultados_cuant, f)
+# ========================================== HIPERPARÁMETROS WANDB =====================================================
+    if (conf["KDR"]["wandb"]):
+        with open("config_wandb.json", "r", encoding="utf-8") as f:
+            conf_wandb = json.load(f)
+
+        sweep_config = conf_wandb
+        sweep_id = wandb.sweep(sweep_config, project="Denoising_Sint_FKD_Final")
+        wandb.agent(sweep_id, lambda:train_kd_wandb(teacher))
+
+    guardar_json(conf, f"{results_dir}/config.json")

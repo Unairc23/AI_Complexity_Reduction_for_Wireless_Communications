@@ -4,7 +4,6 @@ import h5py
 from pathlib import Path
 from matplotlib import pyplot as plt
 from sklearn.model_selection import train_test_split, KFold
-from sympy import false
 
 with open("config.json", "r", encoding="utf-8") as f:
     conf = json.load(f)

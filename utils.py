@@ -228,3 +228,7 @@ def evaluate_psnr(model, loader, device):
             total_psnr += psnr.mean().item()
 
     return total_psnr / len(loader)
+
+def guardar_json(data, path):
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=4, default=str)
