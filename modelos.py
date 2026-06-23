@@ -5,7 +5,6 @@ import torch.nn as nn
 def load_resnet():
     model = timm.create_model("resnet18", pretrained=False)
 
-    # override model
     model.conv1 = nn.Conv2d(3, 64, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
     model.maxpool = nn.Identity()  # type: ignore
     model.fc = nn.Linear(512, 10)
@@ -43,7 +42,7 @@ class LightNN(nn.Module):
         x = self.classifier(x)
         return x
 
-# Student de mayor tamaño siguiendo especificaciones del paper
+# Student de mayor tamaño
 class LightNN_Adaptada(nn.Module):
     def __init__(self, num_classes=10):
         super(LightNN_Adaptada, self).__init__()
@@ -109,7 +108,7 @@ class DeepNN(nn.Module):
         x = self.classifier(x)
         return x
 
-# Teacher de mayor tamaño siguiendo especificaciones del paper
+# Teacher de mayor tamaño
 class DeepNN_Adaptada(nn.Module):
     def __init__(self, num_classes=10):
         super(DeepNN_Adaptada, self).__init__()
@@ -161,14 +160,29 @@ class DnCNN(nn.Module):
     def __init__(self, depth=5, n_filters=64, kernel_size=3, n_channels=2):
         super(DnCNN, self).__init__()
         layers = [
-            nn.Conv2d(in_channels=n_channels, out_channels=n_filters, kernel_size=kernel_size, padding=1, bias=False),
+            nn.Conv2d(
+                in_channels=n_channels,
+                out_channels=n_filters,
+                kernel_size=kernel_size,
+                padding=1, bias=False),
             nn.ReLU(inplace=True)
         ]
         for _ in range(depth - 2):
-            layers.append(nn.Conv2d(in_channels=n_filters, out_channels=n_filters, kernel_size=kernel_size, padding=1, bias=False))
+            layers.append(nn.Conv2d(
+                in_channels=n_filters,
+                out_channels=n_filters,
+                kernel_size=kernel_size,
+                padding=1,
+                bias=False))
             layers.append(nn.BatchNorm2d(n_filters))
             layers.append(nn.ReLU(inplace=True))
-        layers.append(nn.Conv2d(in_channels=n_filters, out_channels=n_channels, kernel_size=kernel_size, padding=1, bias=False))
+
+        layers.append(nn.Conv2d(
+            in_channels=n_filters,
+            out_channels=n_channels,
+            kernel_size=kernel_size,
+            padding=1,
+            bias=False))
         self.dncnn = nn.Sequential(*layers)
 
     def forward(self, x):
@@ -203,7 +217,7 @@ class UNetDenoiser(nn.Module):
         self.enc2 = UNetBlock(b, b * 2)
         self.pool2 = nn.MaxPool2d(2)
 
-        # Bottleneck para hookear las features
+        # Bottleneck
         self.bottleneck = UNetBlock(b * 2, b * 4)
 
         # Decoder

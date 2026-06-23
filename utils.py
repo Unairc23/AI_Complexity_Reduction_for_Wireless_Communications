@@ -23,7 +23,6 @@ def graficar(model, dataset, device, idx=0, modelName="modelo", modo="unico"):
     with torch.no_grad():
         y_pred = model(x_in)
 
-    # Mover a numpy
     x = x.cpu().numpy()
     y = y.cpu().numpy()
     y_pred = y_pred.squeeze(0).cpu().numpy()
@@ -31,15 +30,12 @@ def graficar(model, dataset, device, idx=0, modelName="modelo", modo="unico"):
     if modo == "unico":
         fig, axs = plt.subplots(3, 1, figsize=(8, 12))
 
-        # Entrada
         axs[0].imshow(x[0], cmap="viridis")
         axs[0].set_title("Entrada")
 
-        # Objetivo
         axs[1].imshow(y[0], cmap="viridis")
         axs[1].set_title("Objetivo")
 
-        # Reconstrucción
         axs[2].imshow(y_pred[0], cmap="viridis")
         axs[2].set_title(f"Reconstrucción {modelName}")
 
@@ -97,66 +93,6 @@ def plot_training_curves(histories, title="Training curves"):
     plt.grid(True)
     plt.show()
 
-def guardar_training_curves(histories):
-
-    wb = openpyxl.Workbook()
-
-    ws_wide = wb.active
-    ws_wide.title = "wide"
-
-    header = ["epoch"]
-    max_len = 0
-    normalized = {}
-
-    for name, (train_hist, val_hist) in histories.items():
-        train_vals = list(train_hist)
-        val_vals = list(val_hist)
-        normalized[name] = (train_vals, val_vals)
-        max_len = max(max_len, len(train_vals), len(val_vals))
-        header.extend([f"{name}_train", f"{name}_val"])
-
-    ws_wide.append(header)
-
-    for epoch_idx in range(max_len):
-        row = [epoch_idx + 1]
-        for name in histories.keys():
-            train_vals, val_vals = normalized[name]
-            train_value = train_vals[epoch_idx] if epoch_idx < len(train_vals) else None
-            val_value = val_vals[epoch_idx] if epoch_idx < len(val_vals) else None
-            row.extend([train_value, val_value])
-        ws_wide.append(row)
-
-    ws_long = wb.create_sheet(title="long")
-    ws_long.append(["model", "epoch", "train_loss", "val_loss"])
-
-    for name, (train_vals, val_vals) in normalized.items():
-        local_max = max(len(train_vals), len(val_vals))
-        for epoch_idx in range(local_max):
-            train_value = train_vals[epoch_idx] if epoch_idx < len(train_vals) else None
-            val_value = val_vals[epoch_idx] if epoch_idx < len(val_vals) else None
-            ws_long.append([name, epoch_idx + 1, train_value, val_value])
-
-    ws_params = wb.create_sheet(title="params")
-    flat_conf = flatten_dict(conf)
-    for name, value in flat_conf.items():
-        ws_params.append([name, value])
-
-    fechaHora = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    snr_med = np.median(conf["Data"]["Snr_db"]).astype(int)
-    output_path = f"results/t{conf["Model"]["tDepth"]}_s{conf["Model"]["sDepth"]}_{snr_med}db_{fechaHora}.xlsx"
-    wb.save(output_path)
-    print(f"Curvas de entrenamiento guardadas en {output_path}")
-
-def flatten_dict(d, parent_key="", sep="."):
-    items = []
-    for k, v in d.items():
-        new_key = f"{parent_key}{sep}{k}" if parent_key else k
-        if isinstance(v, dict):
-            items.extend(flatten_dict(v, new_key, sep=sep).items())
-        else:
-            items.append((new_key, v))
-    return dict(items)
-
 def graficar_attention_maps(model, dataset, device, idx=0, modelName="modelo"):
     model.eval()
 
@@ -180,7 +116,6 @@ def graficar_attention_maps(model, dataset, device, idx=0, modelName="modelo"):
             continue
 
         feat = feature_dict[name]  # (1, C, H, W)
-        # Mapa de atención: media cuadrática sobre canales -> (H, W)
         attn = feat.pow(2).mean(dim=1).squeeze(0).cpu().numpy()
 
         im = ax.imshow(attn, cmap="hot")

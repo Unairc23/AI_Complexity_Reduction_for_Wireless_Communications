@@ -1,5 +1,4 @@
 import os
-import sys
 
 import torch
 import torch.nn as nn
@@ -29,7 +28,6 @@ MODEL_REGISTRY = {
 # "pip3 install torch torchvision --index-url https://download.pytorch.org/whl/cu126"
 
 device = torch.accelerator.current_accelerator().type if torch.accelerator.is_available() else "cpu"
-# print(f"Using {device} device")
 
 torch.manual_seed(42)
 if device == 'cuda':
@@ -39,13 +37,12 @@ np.random.seed(42)
 torch.backends.cudnn.deterministic = True
 torch.backends.cudnn.benchmark = False
 
-# Below we are preprocessing data for CIFAR-10. We use an arbitrary batch size of 128.
 transforms_cifar = transforms.Compose([
     transforms.ToTensor(),
     transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
 ])
 
-# Loading the CIFAR-10 dataset:
+# Dataset
 train_dataset = datasets.CIFAR10(root='./data', train=True, download=True, transform=transforms_cifar)
 test_dataset = datasets.CIFAR10(root='./data', train=False, download=True, transform=transforms_cifar)
 
@@ -93,15 +90,11 @@ def train(model, train_loader, val_loader, epochs, learning_rate, device):
     for epoch in range(epochs):
         running_loss = 0.0
         for inputs, labels in train_loader:
-            # inputs: A collection of batch_size images
-            # labels: A vector of dimensionality batch_size with integers denoting class of each image
             inputs, labels = inputs.to(device), labels.to(device)
 
             optimizer.zero_grad()
             outputs = model(inputs)
 
-            # outputs: Output of the network for the collection of images. A tensor of dimensionality batch_size x num_classes
-            # labels: The actual labels of the images. Vector of dimensionality batch_size
             loss = criterion(outputs, labels)
             loss.backward()
             optimizer.step()
@@ -160,8 +153,8 @@ def train_knowledge_distillation(teacher, student, train_loader, val_loader, epo
 
     teacher.to(device)
     student.to(device)
-    teacher.eval()  # Teacher set to evaluation mode
-    student.train() # Student to train mode
+    teacher.eval()
+    student.train()
 
     early_stopper = EarlyStoppingAcc(patience=3)
 
@@ -172,11 +165,9 @@ def train_knowledge_distillation(teacher, student, train_loader, val_loader, epo
 
             optimizer.zero_grad()
 
-            # Forward pass with the teacher model - do not save gradients here as we do not change the teacher's weights
             with torch.no_grad():
                 teacher_logits = teacher(inputs)
 
-            # Forward pass with the student model
             student_logits = student(inputs)
 
             # Loss KD estándar usando KLDiv entre log_softmax(student/T) y softmax(teacher/T).
@@ -266,7 +257,6 @@ def parse_args():
 
 
 if __name__ == "__main__":
-    # Creo que esta linea solo es necesaria en windows, linux hace un fork
     torch.multiprocessing.freeze_support()
 
     args = parse_args()
@@ -282,6 +272,13 @@ if __name__ == "__main__":
 
         torch.save(teacher.state_dict(), f"model/{args.teacher}.pth")
         torch.save(student.state_dict(), f"model/{args.student}.pth")
+
+        teacher_size = os.path.getsize(f"model/{args.teacher}.pth") / 1024 ** 2
+        print(f"Teacher Size: {teacher_size} \n")
+        student_size = os.path.getsize(f"model/{args.student}.pth") / 1024 ** 2
+        print(f"Student Size: {student_size} \n")
+
+        print(f"Diferencia de tamaño: {teacher_size / student_size:.2f}x ({teacher_size:.2f}MB -> {student_size:.2f}MB)")
 
     else:
         teacher = load_model(teacher, path=f"model/{args.teacher}.pth", device=device)
@@ -326,7 +323,7 @@ if __name__ == "__main__":
         for T, acc in temp_dict.items():
             print(f"α={alpha:.2f} / T={T} → Accuracy: {acc:.2f}%")
 
-# ============================ COSAS WANDB ============================
+# ============================ WANDB ============================
 #
 #     sweep_config = {
 #         'method': 'bayes',  # bayesian, random, grid
@@ -336,8 +333,8 @@ if __name__ == "__main__":
 #         },
 #         'parameters': {
 #             'alpha': {
-#                 'min': 0.1,
-#                 'max': 0.9
+#                 'min': 0.6,
+#                 'max': 0.8
 #             },
 #             'T': {
 #                 'min': 1,
@@ -352,5 +349,5 @@ if __name__ == "__main__":
 #         }
 #     }
 #
-#     sweep_id = wandb.sweep(sweep_config, project="Basic_Knowledge_Distillation_Resnet")
+#     sweep_id = wandb.sweep(sweep_config, project="Adaptada_Res_KD")
 #     wandb.agent(sweep_id, lambda:train_kd_wandb(teacher))

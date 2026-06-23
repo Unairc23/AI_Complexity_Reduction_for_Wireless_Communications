@@ -31,33 +31,30 @@ def cuantizar_estatica(model, device, calibration_loader, num_batches=10):
     print(f"Usando backend {backend} para {machine}")
     torch.backends.quantized.engine = backend
 
-    # Cuantización estatica solo funciona en CPU
+    # Cuantización estática solo está soportada en CPU
     model = model.eval().cpu()
 
-    if (conf["Cuant"]["mode"] == 'int8'):
-        qconfig_mapping = (
-            QConfigMapping()
-            .set_global(get_default_qconfig(backend))
-            .set_object_type(torch.nn.ConvTranspose2d, None)
-            #   ConvTranspose2d no se cuantiza porque no lo soporta torchao, tambien podria cuantizarse per-tensor,
-            #   pero esto produce resultados bastante peores (perdida de 4.48% vs 0.15% en student)
-        )
+    qconfig_mapping = (
+        QConfigMapping()
+        .set_global(get_default_qconfig(backend))
+        .set_object_type(torch.nn.ConvTranspose2d, None)
+        #   ConvTranspose2d no se cuantiza porque no lo soporta torchao, también podría cuantizarse per-tensor,
+        #   pero esto produce resultados bastante peores (perdida de 4.48% vs 0.15% en student)
+    )
 
-        example_inputs = (torch.randn(1, 2, 128, 128),)
+    example_inputs = (torch.randn(1, 2, 128, 128),)
 
-        model_prepared = prepare_fx(model, qconfig_mapping, example_inputs)
+    model_prepared = prepare_fx(model, qconfig_mapping, example_inputs)
 
-        print(f"Calibrando con {num_batches} batches...")
-        with torch.no_grad():
-            for i, (inputs, _) in enumerate(calibration_loader):
-                model_prepared(inputs.cpu())
-                if i + 1 >= num_batches:
-                    break
-        print("Calibración completada.")
+    print(f"Calibrando con {num_batches} batches...")
+    with torch.no_grad():
+        for i, (inputs, _) in enumerate(calibration_loader):
+            model_prepared(inputs.cpu())
+            if i + 1 >= num_batches:
+                break
+    print("Calibración completada.")
 
-        model_quantized = convert_fx(model_prepared)
-    else:
-        model_quantized = model.half() # TODO: Ahora mismo esto crea problemas porque cambia el tipo de pesos
+    model_quantized = convert_fx(model_prepared)
 
     return model_quantized.to(device)
 
@@ -86,12 +83,11 @@ def entrenar_qat(model, device, calibration_loader, num_batches=10):
     example_input = next(iter(calibration_loader))[0][:1]  # un batch de ejemplo
 
     student_qat = prepare_qat_fx(model, qconfig_mapping, example_input)
-    # student_qat ahora tiene fake-quantize nodes — entrenable pero solo en CPU
     student_qat.train()
     return student_qat
 
 def cuantizar_qat(model):
-    # 3. Convertir a INT8 real
+    # Convertir a INT8 real
     model.eval()
     student_int8 = convert_fx(model)
     return student_int8

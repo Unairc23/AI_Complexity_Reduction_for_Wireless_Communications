@@ -23,7 +23,7 @@ def cargarDatosNist(dset='h_AAplant_int_5G'):
     print (f"Shape original: {data.shape}")
     return data
 
-def preprocesarDatos(data, window, stride, snr_values=[5]):
+def preprocesarDatos(data, window, stride, snr_values=[10, 15, 25]):
     data_clean = data[:, :window]
     print(f"Eliminando valores τ para evitar NaN: {data_clean.shape}")
 
@@ -67,7 +67,7 @@ def preprocesarDatos(data, window, stride, snr_values=[5]):
 
 def añadir_awgn_complejo(señal, snr_db):
     p_señal = np.mean(np.abs(señal) ** 2) # Potencia de la señal
-    snr_linear = 10 ** (snr_db / 10) # Psar SNR de dB a Linear
+    snr_linear = 10 ** (snr_db / 10) # Pasar SNR de dB a Linear
     p_ruido = p_señal / snr_linear
     sigma = np.sqrt(p_ruido / 2)
     ruido = sigma * (np.random.randn(*señal.shape) +
@@ -107,7 +107,7 @@ def preprocesarDatosSynt(data, window, stride):
     real = np.real(data)
     imag = np.imag(data)
 
-    # Pasar NaN -> 0
+    # Pasar NaN a 0
     real = np.nan_to_num(real, nan=0.0)
     imag = np.nan_to_num(imag, nan=0.0)
 
@@ -115,8 +115,9 @@ def preprocesarDatosSynt(data, window, stride):
 
     señal = real + 1j * imag
 
-    for t in range(0, señal.shape[1] - window + 1, stride):
-        bloque = señal[:, t:t + window]
+    for t in range(0, señal.shape[0] - window + 1, stride):
+        bloque = señal[t:t + window, :]
+        bloque, _ = normalizar_complejo(bloque)
 
         real = np.real(bloque)
         imag = np.imag(bloque)
@@ -180,27 +181,25 @@ def crear_imagenes_sint():
 
     imagenes = np.load(dset)
     imagenes_ruido = np.load(dset_ruido)
-
+    imagenes = np.transpose(imagenes, (1, 0))
+    imagenes_ruido = np.transpose(imagenes_ruido, (1, 0))
     print(imagenes.shape)
     print(imagenes_ruido.shape)
 
-    print(imagenes)
-    print(imagenes_ruido)
-
-    indices = np.arange(imagenes.shape[1])
-    idx_train, idx_test = train_test_split(indices, test_size=0.3, shuffle=True, random_state=42)
-    idx_val, idx_test = train_test_split(idx_test, test_size=0.5, shuffle=True, random_state=42)
+    indices = np.arange(imagenes.shape[0])
+    idx_train, idx_test = train_test_split(indices, test_size=0.3, shuffle=False)
+    idx_val, idx_test = train_test_split(idx_test, test_size=0.5, shuffle=False)
 
     idx_train = np.sort(idx_train)
     idx_test = np.sort(idx_test)
     idx_val = np.sort(idx_val)
 
-    imagenes_train = imagenes[:, idx_train]
-    imagenes_test = imagenes[:, idx_test]
-    imagenes_val = imagenes[:, idx_val]
-    imagenes_ruido_train = imagenes_ruido[:, idx_train]
-    imagenes_ruido_test = imagenes_ruido[:, idx_test]
-    imagenes_ruido_val = imagenes_ruido[:, idx_val]
+    imagenes_train = imagenes[idx_train, :]
+    imagenes_test = imagenes[idx_test, :]
+    imagenes_val = imagenes[idx_val, :]
+    imagenes_ruido_train = imagenes_ruido[idx_train, :]
+    imagenes_ruido_test = imagenes_ruido[idx_test, :]
+    imagenes_ruido_val = imagenes_ruido[idx_val, :]
 
     imagenes_train = preprocesarDatosSynt(imagenes_train, 128, conf["Data"]["Stride"])
     imagenes_test = preprocesarDatosSynt(imagenes_test, 128, conf["Data"]["Stride"])
@@ -231,7 +230,7 @@ def crear_imagenes_sint():
     print(f"Imagenes guardadas en {dset.replace('.npy', '_Val.npy')}")
 
     if conf["Data"]["Kfold"]:
-        folds = KFold(n_splits=5, shuffle=True, random_state=42)
+        folds = KFold(n_splits=5, shuffle=False)
         fold_real_dir, fold_est_dir = preparar_directorios_folds()
         dset_name = Path(dset).stem
         dsetR_name = Path(dset_ruido).stem
@@ -239,10 +238,10 @@ def crear_imagenes_sint():
             idx_fold_train = np.sort(idx_train[train_idx])
             idx_fold_val = np.sort(idx_train[val_idx])
 
-            img_fold_train = preprocesarDatosSynt(imagenes[:, idx_fold_train], 128, conf["Data"]["Stride"])
-            img_fold_val = preprocesarDatosSynt(imagenes[:, idx_fold_val], 128, conf["Data"]["Stride"])
-            img_ruido_fold_train = preprocesarDatosSynt(imagenes_ruido[:, idx_fold_train], 128, conf["Data"]["Stride"])
-            img_ruido_fold_val = preprocesarDatosSynt(imagenes_ruido[:, idx_fold_val], 128, conf["Data"]["Stride"])
+            img_fold_train = preprocesarDatosSynt(imagenes[idx_fold_train, :], 128, conf["Data"]["Stride"])
+            img_fold_val = preprocesarDatosSynt(imagenes[idx_fold_val, :], 128, conf["Data"]["Stride"])
+            img_ruido_fold_train = preprocesarDatosSynt(imagenes_ruido[idx_fold_train, :], 128, conf["Data"]["Stride"])
+            img_ruido_fold_val = preprocesarDatosSynt(imagenes_ruido[idx_fold_val, :], 128, conf["Data"]["Stride"])
 
             real_train_path = fold_real_dir / f'{dset_name}_{fold_idx}_Train.npy'
             real_val_path = fold_real_dir / f'{dset_name}_{fold_idx}_Val.npy'
@@ -265,9 +264,8 @@ def crear_imagenes():
     data = cargarDatosNist(dset)
 
     indices = np.arange(data.shape[0])
-    # TODO: Viendo los datasets creo que no hace falta, pero por si acaso igual define shuffle=False
-    idx_train, idx_test = train_test_split(indices, test_size=0.3, random_state=42)
-    idx_val, idx_test = train_test_split(idx_test, test_size=0.5, random_state=42)
+    idx_train, idx_test = train_test_split(indices, test_size=0.3, shuffle=False)
+    idx_val, idx_test = train_test_split(idx_test, test_size=0.5, shuffle=False)
 
     data_train = data[idx_train]
     data_test = data[idx_test]
@@ -300,7 +298,7 @@ def crear_imagenes():
     print(f"Imagenes con SNR {snr_medio} guardadas en data/NIST_{dset}snr_{snr_medio}_Val.npy")
 
     if (conf["Data"]["Kfold"]):
-        folds = KFold(n_splits=5, shuffle=True, random_state=42)
+        folds = KFold(n_splits=5, shuffle=False)
         fold_real_dir, fold_est_dir = preparar_directorios_folds()
         for fold_idx, (train_idx, val_idx) in enumerate(folds.split(idx_train)):
             idx_fold_train = np.sort(idx_train[train_idx])
