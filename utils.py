@@ -11,7 +11,7 @@ import openpyxl
 with open("config.json") as f:
     conf = json.load(f)
 
-# ========================================REPRESENTACION / GUARDADO DATOS===============================================
+# ========================================= REPRESENTACION DE LOS DATOS ================================================
 
 def graficar(model, dataset, device, idx=0, modelName="modelo", modo="unico"):
 
@@ -126,8 +126,38 @@ def graficar_attention_maps(model, dataset, device, idx=0, modelName="modelo"):
     plt.tight_layout()
     plt.show()
 
+def mostrar_denoising(model, dataset, device, idx=0):
+    model.eval()
+    x, y = dataset[idx]
+    x_in = x.unsqueeze(0).to(device)
+    with torch.no_grad():
+        y_pred = model(x_in)
+    x = x.cpu().numpy()
+    y = y.cpu().numpy()
+    y_pred = y_pred.squeeze(0).cpu().numpy()
+
+    X = x[0, 64, :] + 1j * x[1, 64, :]
+    Y = y[0, 64, :] + 1j * y[1, 64, :]
+    Y_pred = y_pred[0, 64, :] + 1j * y_pred[1, 64, :]
+
+    fig, ax = plt.subplots(1, 2, figsize=(8, 8))
+    ax[0].plot(np.abs(X), label="Señal con ruido")
+    ax[0].plot(np.abs(Y), label="Señal limpia")
+    ax[0].legend()
+    ax[0].set_xlabel("Retardo (τ)")
+    ax[0].set_ylabel("Magnitud")
+
+    ax[1].plot(np.abs(Y_pred), label="Señal tras denoising")
+    ax[1].plot(np.abs(Y), label="Señal limpia")
+    ax[1].legend()
+    ax[1].set_xlabel("Retardo (τ)")
+    ax[1].set_ylabel("Magnitud")
+    fig.suptitle("Denoising")
+    plt.show()
+
 # ================================================== FB/AT KD ==========================================================
 
+# Funciones para extraer features (FKD)
 def register_hook(model, model_name, container, name):
     if model_name == "DnCNN":
         layer = model.dncnn[-2]
@@ -138,12 +168,13 @@ def register_hook(model, model_name, container, name):
         raise ValueError(f"Modelo {model_name} no soporta feature hooks")
     layer.register_forward_hook(save_activation(container, name))
 
-# Función para extraer features intermedias del modelo sin necesitar una arquitectura especifica o modificarlo
+
 def save_activation(container, name):
     def hook(module, input, output):
         container[name] = output
     return hook
 
+# Funciones para extraer mapas de atención (AT)
 def register_hooks_at(model, feature_dict):
     def make_hook(name):
         def hook(module, input, output):

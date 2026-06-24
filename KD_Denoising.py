@@ -105,7 +105,7 @@ def cargar_fold(i, batch=16):
 
 def train_kd_wandb(teacher):
     wandb.init(
-        # Estos parametros se añaden aqui unicamente para tener luego registro de ello en wandb
+        # Añadir parámetros utilizados para tener registro de ellos en Wandb
         config={
             'model': conf["KDR"]["sModel"],
             'sint': conf["Data"]["Sint"],
@@ -121,9 +121,9 @@ def train_kd_wandb(teacher):
                    device=device, batch=cfg.batch_size, teacher=teacher, alpha=cfg.alpha, patience=cfg.patience,
                    epochs=cfg.epochs, learning_rate=cfg.learning_rate, beta=cfg.beta, t_features=teacher_features, cuant="none")
 
-# ============================================== CARGA MODELOS ========================================================
+# ============================================== CARGAR MODELOS ========================================================
 def load_model(model, path, device):
-    # Carga un modelo si el archivo existe, o devuelve uno nuevo.
+    # Carga un modelo si el archivo existe
     if os.path.exists(path):
         model.load_state_dict(torch.load(path, map_location=device))
         print(f"Modelo cargado desde {path}")
@@ -131,8 +131,8 @@ def load_model(model, path, device):
         print(f"No se encontó el archivo {path}, se inicializa un modelo nuevo.")
     return model
 
+# =================================================== MAIN =============================================================
 if __name__ == "__main__":
-    # Creo que esta linea solo es encesaria en windows, linux hace un fork
     torch.multiprocessing.freeze_support()
 
     tModel = conf["KDR"]["tModel"]
@@ -143,18 +143,13 @@ if __name__ == "__main__":
     snr_med = np.median(snr).astype(int)
     print(snr_med)
 
-    teacher_hist = None
-    student_hist = None
-    kd_hist = None
-    fkd_hist = None
-    akd_hist = None
-
+    # Cargar las arquitecturas de los modelos
     teacher = MODEL_REGISTRY[tModel]["Teacher"]().to(device)
     student = MODEL_REGISTRY[sModel]["Student"]().to(device)
 
+    # Hookear tanto features como attention maps del teacher
     teacher_features = {}
     teacher_attentions = {}
-
     register_hook(teacher, tModel, teacher_features, "latent")
     register_hooks_at(teacher, teacher_attentions)
 
@@ -190,34 +185,6 @@ if __name__ == "__main__":
     else:
         student = load_model(student, path=f"model/{sModel}_{s_tamaño}l_{snr_med}snr.pth", device=device)
 
-    teacher.eval()
-    x, y = test_ds[0]
-    x_in = x.unsqueeze(0).to(device)
-    with torch.no_grad():
-        y_pred = teacher(x_in)
-    x = x.cpu().numpy()
-    y = y.cpu().numpy()
-    y_pred = y_pred.squeeze(0).cpu().numpy()
-
-    X = x[0, 64, :] + 1j * x[1, 64, :]
-    Y = y[0, 64, :] + 1j * y[1, 64, :]
-    Y_pred = y_pred[0, 64, :] + 1j * y_pred[1, 64, :]
-
-    fig, ax = plt.subplots(1, 2, figsize=(8, 8))
-    ax[0].plot(np.abs(X), label="Señal con ruido")
-    ax[0].plot(np.abs(Y), label="Señal limpia")
-    ax[0].legend()
-    ax[0].set_xlabel("Retardo (τ)")
-    ax[0].set_ylabel("Magnitud")
-
-    ax[1].plot(np.abs(Y_pred), label="Señal tras denoising")
-    ax[1].plot(np.abs(Y), label="Señal limpia")
-    ax[1].legend()
-    ax[1].set_xlabel("Retardo (τ)")
-    ax[1].set_ylabel("Magnitud")
-    fig.suptitle("Denoising")
-    plt.show()
-
     # =========================================== Comparar modelos======================================================
 
     # Comparar tamaño teacher / modelo sin destilar
@@ -233,11 +200,13 @@ if __name__ == "__main__":
 
     print(f"Diferencia de tamaño: {teacher_size / student_size:.2f}x ({teacher_size:.2f}MB -> {student_size:.2f}MB)")
 
-    # Comparacion de resultados entre teacher y modelo sin destilar:
+    # Comparación de resultados entre teacher y modelo sin destilar:
     idx = int(conf["KDR"].get("plot_idx", 0))
     idx = max(0, min(idx, len(test_ds) - 1))
     graficar(student, test_ds, device, idx=idx, modelName="no_kd_student", modo="canales")
     graficar(teacher, test_ds, device, idx=idx, modelName="teacher", modo="canales")
+    mostrar_denoising(model=teacher, dataset=test_ds, idx=idx, device=device)
+    mostrar_denoising(model=student, dataset=test_ds, idx=idx, device=device)
 
     snr = []
     mseT = evaluate(teacher, test_loader, device)
@@ -296,7 +265,7 @@ if __name__ == "__main__":
                            learning_rate=conf["Model"]["lr"], cuant="none")
             guardar_json(results, f"{results_dir}/kfold_RKD.json")
 
-        # Comparacion entre teacher y modelo destilado
+        # Comparación entre teacher y modelo destilado con RKD
         torch.save(kd_student.state_dict(), f"model/kd_{sModel}_{s_tamaño}l_{snr_med}snr.pth")
         graficar(kd_student, test_ds, device, idx=idx, modelName="kd_student", modo="canales")
 
@@ -305,6 +274,7 @@ if __name__ == "__main__":
         print("\n================ Entrenando feature_kd_student ================")
         kd_student_feature = MODEL_REGISTRY[sModel]["Student"]().to(device)
 
+        # Hookear features del student para registrarlas en la lista
         fkd_features = {}
         register_hook(kd_student_feature, sModel, fkd_features, "latent")
 
@@ -323,6 +293,7 @@ if __name__ == "__main__":
                            cuant="none")
             guardar_json(results, f"{results_dir}/kfold_FKD.json")
 
+        # Comparación entre teacher y modelo destilado con FKD
         torch.save(kd_student_feature.state_dict(), f"model/fkd_{sModel}_{s_tamaño}l_{snr_med}snr.pth")
         graficar(kd_student_feature, test_ds, device, idx=idx, modelName="kd_student_feature", modo="canales")
 
@@ -331,12 +302,13 @@ if __name__ == "__main__":
         print("\n================ Entrenando attention_kd_student ================")
         kd_student_attention = MODEL_REGISTRY[sModel]["Student"]().to(device)
 
-        akd_features = {}
-        register_hooks_at(kd_student_attention, akd_features)
+        # Hookear attention maps del student para registrarlas en la lista
+        akd_at_maps = {}
+        register_hooks_at(kd_student_attention, akd_at_maps)
 
         if not (conf["Data"]["Kfold"]):
             akd_hist = train_akd(teacher=teacher, student=kd_student_attention,
-                                 t_attentions=teacher_attentions, s_attentions=akd_features,
+                                 t_attentions=teacher_attentions, s_attentions=akd_at_maps,
                                  train_loader=train_loader, val_loader=val_loader, epochs=conf["Model"]["sEpoch"],
                                  learning_rate=conf["Model"]["lr"], device=device, alpha=conf["KDR"]["alpha"],
                                  patience=conf["Model"]["patience"], beta=conf["KDR"]["beta"])
@@ -349,6 +321,7 @@ if __name__ == "__main__":
                            cuant="none")
             guardar_json(results, f"{results_dir}/hist_AKD.json")
 
+        # Comparación entre teacher y modelo destilado con AKD
         torch.save(kd_student_attention.state_dict(), f"model/akd_{sModel}_{s_tamaño}l_{snr_med}snr.pth")
         graficar(kd_student_attention, test_ds, device, idx=idx, modelName="kd_student_attention", modo="canales")
 
@@ -360,10 +333,10 @@ if __name__ == "__main__":
         teacher_q = cuantizar_estatica(teacher, device, val_loader)
         student_q = cuantizar_estatica(student, device, val_loader)
         cpu = torch.device("cpu")
-        teacher_q.to(cpu)
-        student_q.to(cpu) # La cuantización se aplica sobre cpu siempre, pasar modelos explicitamente a gpu
+        teacher_q.to(cpu) # La cuantización se aplica sobre cpu
+        student_q.to(cpu)
 
-        # Comparacion de tamaños
+        # Comparación de tamaños
         torch.save(teacher_q.state_dict(), "model/teacher_q.pth")
         torch.save(student_q.state_dict(), "model/baseline_q.pth")
 

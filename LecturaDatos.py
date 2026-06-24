@@ -29,7 +29,7 @@ def preprocesarDatos(data, window, stride, snr_values=[10, 15, 25]):
     real = data_clean['real']
     imag = data_clean['imag']
 
-    # Pasar NaN -> 0
+    # Pasar NaN a 0
     real = np.nan_to_num(real, nan=0.0)
     imag = np.nan_to_num(imag, nan=0.0)
 
@@ -101,7 +101,7 @@ def normalizar_complejo(señal, stats=None, clip=False):
 
     return real_norm + 1j * imag_norm, (min_r, max_r, min_i, max_i)
 
-# Stride podria ser fijo, da mejores resultados con 128
+# Stride podría ser fijo, da mejores resultados con 128 sobre los datos sintéticos
 def preprocesarDatosSynt(data, window, stride):
     real = np.real(data)
     imag = np.imag(data)

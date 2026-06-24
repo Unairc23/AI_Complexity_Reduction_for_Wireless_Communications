@@ -21,7 +21,7 @@ MODEL_REGISTRY = {
     "light_adaptada": lambda: LightNN_Adaptada(num_classes=10),
 }
 
-# La estructura basica del código está sacada de https://docs.pytorch.org/tutorials/beginner/knowledge_distillation_tutorial.html
+# La estructura general del código está basada en https://docs.pytorch.org/tutorials/beginner/knowledge_distillation_tutorial.html
 # Los modelos _Adaptada están hechos siguiendo el paper "Simplified Knowledge Distillation for Deep Neural Networks"
 
 # Para instalar torch con cuda:
@@ -211,14 +211,14 @@ def train_kd_wandb(teacher):
         device=device
     )
 
-    # Evaluación del modelo estudiante
+    # Evaluación del modelo student
     acc = test(student, test_loader, device)
 
     # Reportar métrica al sweep
     wandb.log({"accuracy": acc})
 
 def load_model(model, path, device):
-    """Carga un modelo si el archivo existe, o devuelve uno nuevo."""
+    # Carga un modelo si el archivo existe, o devuelve uno nuevo.
     if os.path.exists(path):
         model.load_state_dict(torch.load(path, map_location=device))
         print(f" Modelo cargado desde {path}")
@@ -293,7 +293,7 @@ if __name__ == "__main__":
     print(f"Teacher accuracy: {test_accuracy_deep:.2f}%")
     print(f"Student accuracy: {test_accuracy_light_ce:.2f}%")
 
-# --- Experimento con distintos pesos alpha ---
+# ============================ Experimento con distintos pesos alpha ============================
     alphas = [0.1, 0.25, 0.5, 0.75, 0.9]
     Ts = [t for t in range(1,20)]
     results = {}

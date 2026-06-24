@@ -6,7 +6,7 @@ def load_resnet():
     model = timm.create_model("resnet18", pretrained=False)
 
     model.conv1 = nn.Conv2d(3, 64, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
-    model.maxpool = nn.Identity()  # type: ignore
+    model.maxpool = nn.Identity()
     model.fc = nn.Linear(512, 10)
 
     model.load_state_dict(
@@ -47,19 +47,16 @@ class LightNN_Adaptada(nn.Module):
     def __init__(self, num_classes=10):
         super(LightNN_Adaptada, self).__init__()
         self.features = nn.Sequential(
-            # Bloque 1
             nn.Conv2d(3, 32, kernel_size=3, padding=1),
             nn.BatchNorm2d(32),
             nn.ReLU(),
             nn.MaxPool2d(2, 2),  # 32x32 -> 16x16
 
-            # Bloque 2
             nn.Conv2d(32, 64, kernel_size=3, padding=1),
             nn.BatchNorm2d(64),
             nn.ReLU(),
             nn.MaxPool2d(2, 2),  # 16x16 -> 8x8
 
-            # Bloque 3
             nn.Conv2d(64, 128, kernel_size=3, padding=1),
             nn.BatchNorm2d(128),
             nn.ReLU(),
@@ -132,10 +129,9 @@ class DeepNN_Adaptada(nn.Module):
             nn.ReLU(inplace=True),
         )
 
-        # Se adapta el tamaño a 7x7
-        self.adaptive_pool = nn.AdaptiveAvgPool2d((7, 7))  # out: 64 x 7 x 7
+        self.adaptive_pool = nn.AdaptiveAvgPool2d((7, 7))
 
-        # Clasificador totalmente conectado: fc3136 -> fc1200 -> fc800
+        # Clasificador totalmente conectado
         self.classifier = nn.Sequential(
             nn.Linear(64 * 7 * 7, 3136),
             nn.ReLU(inplace=True),

@@ -81,6 +81,7 @@ def train_kd(teacher, student, train_loader, val_loader, epochs, learning_rate, 
 
             student_y_loss = mse_loss(student_pred, Y)
             teacher_student_loss = mse_loss(student_pred, teacher_pred)
+            # Pérdida de RKD
             loss = alpha * teacher_student_loss + (1.0 - alpha) * student_y_loss
 
             loss.backward()
@@ -198,6 +199,7 @@ def train_fkd(teacher, student, t_features, s_features, train_loader, val_loader
 
             t_latent_proj = bottleneck_proj(t_latent)
             feature_loss = cosine_kd_loss(s_latent, t_latent_proj)
+            # Pérdida de FKD
             loss = (1.0-alpha) * student_y_loss + alpha * kd_loss + beta * feature_loss
 
             loss.backward()
@@ -263,6 +265,7 @@ def train_akd(teacher, student, t_attentions, s_attentions, train_loader, val_lo
                     attention_transfer_loss(s_bottle, t_bottle)
             )
             kd_loss = mse_loss(student_pred, teacher_pred)
+            # Pérdida de AKD
             loss = (1.0-alpha) * out_loss + alpha * kd_loss + beta * at_loss
 
             loss.backward()
@@ -331,6 +334,7 @@ class EarlyStoppingLoss:
 
         return self.counter >= self.patience
 
+    # Función para cargar el mejor estado del modelo
     def restore(self, model):
         if self.best_state is not None:
             model.load_state_dict(self.best_state)
@@ -350,19 +354,19 @@ def run_with_kfold(train_fn, model_fn, load_fold_fn, device, batch, **kwargs,):
         device_fold = device
         kwargs_fold = dict(kwargs)
         print(f"\n Fold {i+1}/{n_folds}")
-        student = model_fn().to(device_fold)
+        student = model_fn().to(device_fold) # En cada fold se crea un nuevo student
         train_loader, val_loader = load_fold_fn(i, batch)
 
-        if("t_features" in kwargs_fold):
+        if("t_features" in kwargs_fold): # Hookea las features del student en caso de existir las del teacher
             s_features = {}
             register_hook(student, conf["KDR"]["sModel"], s_features, "latent")
             kwargs_fold["s_features"] = s_features
-        elif("t_attentions" in kwargs_fold):
+        elif("t_attentions" in kwargs_fold): # Hookea los attention maps del student en caso de exisitir los del teacher
             s_attentions = {}
             register_hooks_at(student, s_attentions)
             kwargs_fold["s_attentions"] = s_attentions
 
-        if(quant == "pre") or (quant == "both"):
+        if(quant == "pre") or (quant == "both"): # Introduce los nodos de fake quantizarion en el student
             student = entrenar_qat(student, device_fold, val_loader)
 
         if("teacher" in kwargs_fold):
@@ -377,12 +381,12 @@ def run_with_kfold(train_fn, model_fn, load_fold_fn, device, batch, **kwargs,):
         train_hists.append(train_hist)
         val_hists.append(val_hist)
 
-        if(quant == "post"):
+        if(quant == "post"): # Aplica PTQ y evalua el modelo cuantizado
             device_fold = torch.device("cpu")
             student = student.to(device_fold)
             student = cuantizar_estatica(student, device_fold, val_loader)
             fold_mse = evaluate(student, val_loader, device_fold)
-        elif (quant == "pre") or (quant == "both"):
+        elif (quant == "pre") or (quant == "both"): # Aplica QAT y evalua el modelo cuantizado
             device_fold = torch.device("cpu")
             student = student.to(device_fold)
             if (quant == "both"): # Fine tunning usando teacher cuantizado
