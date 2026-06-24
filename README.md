@@ -1,4 +1,4 @@
-# AI_Complexity_Reduction
+# Estrategias de optimización y compresión de modelos de IA para su despliegue en redes inalambricas
 
 Este proyecto explora cómo reducir la complejidad de redes neuronales para denoising de señales complejas, usando **Knowledge Distillation** (clásica, basada en features y en atención) y **cuantización** en PyTorch. El objetivo es comparar modelos "teacher" grandes frente a versiones "student" más ligeras, evaluando el compromiso entre tamaño, latencia y calidad de reconstrucción (MSE/PSNR).
 
@@ -41,21 +41,18 @@ pip install -r requirements.txt
 > pip3 install torch torchvision --index-url https://download.pytorch.org/whl/cu126
 > ```
 
-## 4. Cómo usar el código
+## 4. Ejecución
 ### A. Knowledge Distillation para denoising 
 
-`KD_Denoising.py` es el script principal del proyecto. Lee toda su configuración desde `config.json` (no usa argumentos de línea de comandos) y hace lo siguiente:
-
-1. **Carga de datos**: lee los `.npy` de train/test/val indicados en `KDR.X` (entrada con ruido) y `KDR.Y` (objetivo limpio), y construye los `DataLoader` correspondientes. Si `Data.Kfold` es `true`, en su lugar usa `cargar_fold` para leer los folds desde `data/folds/est` y `data/folds/real`.
-2. **Teacher**: si `KDR.t_train` es `true`, lo entrena con `train_basic` (o con `run_with_kfold` si `Data.Kfold` es `true`); si es `false`, carga los pesos guardados en `model/{tModel}_{tDepth}l_{snr_med}snr.pth`.
-3. **Student base (sin destilar)**: igual que el teacher, controlado por `KDR.s_train`, guardado en `model/{sModel}_{sDepth}l_{snr_med}snr.pth`.
-4. **Comparativa teacher vs. student**: grafica una muestra de test (señal con ruido / limpia / reconstruida), calcula MSE, PSNR y latencia de ambos modelos y guarda la comparación en `baseline_results.json`.
-5. **KD clásica, FKD y AKD**: cada una se entrena solo si su flag (`KDR.KD`, `KDR.FKD`, `KDR.AKD`) está activo, usando `train_kd`, `train_fkd` y `train_akd` respectivamente (o sus equivalentes con K-Fold). Los pesos resultantes se guardan como `model/kd_*.pth`, `model/fkd_*.pth` y `model/akd_*.pth`.
-6. **Cuantización**: si `KDR.cuantizar` es `pre`, `post` o `both`, cuantiza estáticamente teacher y student ya entrenados (comparando tamaño/MSE/PSNR antes y después), y además relanza un entrenamiento KD completo con cuantización integrada (`pre`, `post` o `both`) sobre los folds.
-7. **Sweep de W&B**: si `KDR.wandb` es `true`, lanza un sweep bayesiano (definido en `config_wandb.json`) que entrena repetidamente con FKD variando `alpha`, `beta`, `learning_rate`, etc.
-Todos los resultados de cada ejecución (históricos, métricas, configuración usada) se guardan en una carpeta nueva `results/<fecha_hora>/`.
+`KD_Denoising.py` es el script principal del proyecto, configurable mediante el archivo config.json. En caso de no contar con un dataset con las especificaciones necesarias para el proyecto, es necesario ejecutar `LecturaDatos.py`
 
 Ejecutar:
+
+```powershell
+python LecturaDatos.py
+```
+
+Esto creará los datasets en la dirección indicada, para poder ser usados por el script principal:
 
 ```powershell
 python KD_Denoising.py
@@ -103,8 +100,8 @@ Esto genera visualizaciones del dataset y, en el flujo actual.
 
 | Sección | Clave | Valor actual | Descripción corta |
 |---|---:|---:|---|
-| `KDR` | `X` | `data/NIST_h_GBurg_5G_snr_16.npy` | Dataset ruidoso de entrada. |
-| `KDR` | `Y` | `data/NIST_h_GBurg_5G.npy` | Dataset limpio / objetivo. |
+| `KDR` | `X` | `data/Datos_Sinteticos/TDL_D_85ns_fd1000_SNR20_h_est.npy` | Dataset ruidoso de entrada. |
+| `KDR` | `Y` | `data/Datos_Sinteticos/TDL_D_85ns_fd1000_SNR20_h_real.npy` | Dataset limpio / objetivo. |
 | `KDR` | `sModel` | `UNet` | Arquitectura del student. |
 | `KDR` | `tModel` | `UNet` | Arquitectura del teacher. |
 | `KDR` | `t_train` | `true` | Entrena el teacher en lugar de cargarlo. |
@@ -112,7 +109,7 @@ Esto genera visualizaciones del dataset y, en el flujo actual.
 | `KDR` | `KD` | `true` | Activa Knowledge Distillation clásica. |
 | `KDR` | `FKD` | `true` | Activa Feature-based KD. |
 | `KDR` | `AKD` | `true` | Activa Attention-based KD. |
-| `KDR` | `cuantizar` | `pre` | Tipo de prueba de cuantización (`pre`, `post`, `both`). |
+| `KDR` | `cuantizar` | `pre` | Tipo de prueba de cuantización (`pre`, `post`, `both`).|
 | `KDR` | `wandb` | `false` | Activa logging y sweeps con Weights & Biases. |
 | `KDR` | `plot_idx` | `1437` | Índice de muestra para gráficas comparativas. |
 | `KDR` | `alpha` | `0.62` | Peso de la pérdida KD. |
@@ -154,10 +151,9 @@ Durante la ejecución se generan los siguientes archivos:
 - **`model/*.pth`**: pesos guardados de los modelos (teacher, student, KD, FKD, AKD y sus versiones cuantizadas).
 - **`results/<fecha_hora>/`**: carpeta de resultados de cada ejecución, con:
   - `hist_*.json`: históricos de entrenamiento/validación cuando no se usa K-Fold (teacher, baseline, RKD, FKD, AKD).
-  - `kfold_*.json`: métricas agregadas (MSE/PSNR medio y desviación) y por fold cuando se usa K-Fold.
-  - `baseline_results.json` y `baseline_cuant.json`: evaluación de MSE, PSNR, latencia y tamaño de los modelos teacher y baseline y sus versiones de cuantizadas en caso de aplicarse.
-  - `cuant_<tipo>.json`: resultados de la combinación KD + cuantización (`pre`, `post` o `both`), incluyendo tamaño final y latencia.
+  - `kfold_*.json`: métricas agregadas (MSE/PSNR medio y desviación) y por fold cuando se usa K-Fold (teacher, baseline, RKD, FKD, AKD). 
+  - `baseline_results.json`: evaluación de MSE, PSNR, latencia y tamaño de los modelos teacher y baseline.
+  - `baseline_cuant.json`: evaluación de MSE, PSNR y tamaño de los modelos teacher y baseline cuantizados (sin latencia).
+  - `cuant_<tipo>.json`: resultados de la combinación KD clásica + cuantización (`pre`, `post` o `both`), incluyendo tamaño final y latencia.
   - `config.json`: copia de la configuración usada en esa ejecución, para trazabilidad de resultados.
-  - Todos los JSON se guardan con `indent=4` para que sean legibles, no en una sola línea.
 - **`wandb/`**: logs y artefactos de Weights & Biases, si `KDR.wandb` está activado.
-- Gráficas de comparación (señal con ruido vs. señal limpia vs. señal reconstruida, mapas de atención) se muestran en pantalla durante la ejecución mediante `matplotlib`.
